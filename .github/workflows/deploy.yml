@@ -17,4 +17,4 @@ jobs:
         run: docker rm -f linear-planner || true
 
       - name: Start container
-        run: docker run -d --name linear-planner --restart unless-stopped -p 3100:80 linear-planner
+        run: docker run -d --name linear-planner --restart unless-stopped -p 29548:80 linear-planner
