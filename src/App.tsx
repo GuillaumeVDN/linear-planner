@@ -298,6 +298,18 @@ export default function App() {
     }
   }, [connected, selectedProjectId, loadProject]);
 
+  // Re-fetch when tab becomes visible again
+  useEffect(() => {
+    if (!connected) return;
+    const handler = () => {
+      if (document.visibilityState === "visible" && prevProjectId.current) {
+        loadProject(prevProjectId.current);
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [connected, loadProject]);
+
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       <header style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "var(--surface)", display: "flex", flexDirection: "column", gap: 8 }}>
