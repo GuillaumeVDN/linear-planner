@@ -1,73 +1,45 @@
-# React + TypeScript + Vite
+# Linear planner
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A tool to visualize the parallelization and dependencies of Linear issues from a given project.
 
-Currently, two official plugins are available:
+Two view modes:
+- Timeline: a Gantt-like diagram dispatching tasks given a number of people working in parallel on the project
+- Dependency tree: shows vertical relationships between issues.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+It calculates dependencies based on the 'blocked by' related status of the issues.
+The time and dates of issues are estimated from the 'complexity' of issues: 1 point = 1 working day for one person.
 
-## React Compiler
+Both views are split vertically using Linear milestones.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Screenshots 
 
-## Expanding the ESLint configuration
+Landing page:
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+![Landing page](screenshots/landing-page.png)
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+Timeline view:
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+![Timeline view](screenshots/timeline-view.png)
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+Blocked relationship:
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+![Blocked relationship](screenshots/blocked-status.png)
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Dependency tree view:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+![Dependency tree view](screenshots/dependency-tree-view.png)
+
+## Usage & data
+
+The app is [available on my website](https://guillaumevdn.com/linear-planner/).
+ 
+No data is stored on the app: connection is handled via a Linear API key. Using a project-scoped read-only API key is recommended.
+
+All the projects and issues data comes from Linear, and the session key & user preferences are stored in the browser local storage.
+
+## Stack
+
+Made with React + TypeScript + Vite, self-hosted in a docker container.
+
+I don't own or take responsibility for this code as it was 100% AI-written.
+
