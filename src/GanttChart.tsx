@@ -195,7 +195,13 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
 
   const todayCol = useMemo(() => {
     const to = schedule.todayOffset;
-    if (to >= 0 && to < dayToCol.length) return dayToCol[to];
+    if (to >= 0 && to < dayToCol.length) {
+      if (dayToCol[to] >= 0) return dayToCol[to];
+      // Today is hidden (weekend/holiday) — find the next visible column
+      for (let d = to + 1; d < dayToCol.length; d++) {
+        if (dayToCol[d] >= 0) return dayToCol[d];
+      }
+    }
     return -1;
   }, [schedule.todayOffset, dayToCol]);
 
