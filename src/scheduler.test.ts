@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { scheduleIssues, isNonWorkingDay } from "./scheduler";
-import type { LinearIssue, LinearMilestone, LinearWorkflowState } from "./linear";
+import type { LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState } from "./linear";
 
 // --- Helpers ---
 
@@ -50,7 +50,7 @@ function findIssue(result: ReturnType<typeof scheduleIssues>, identifier: string
 }
 
 // Tests use real dates and check relative properties (startDay, endDay, worker, done, etc.)
-// rather than exact calendar positions, to avoid fragile Date mocking.
+// rather than exact dates, so no Date mocking is needed.
 
 // =====================
 // TESTS

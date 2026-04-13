@@ -1,7 +1,7 @@
 import { useMemo, useRef, useEffect, useState } from "react";
 import type { ScheduleResult, ScheduledIssue, CyclePeriod } from "./scheduler";
 import { dayToDate, formatDate, isBankHoliday } from "./scheduler";
-import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, type MilestoneSummaryData } from "./StatusCircle";
+import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, MilestoneHeader, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, type MilestoneSummaryData } from "./StatusCircle";
 
 const ROW_HEIGHT = 36;
 const ROW_GAP = 4;
@@ -73,12 +73,12 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
     for (const ms of schedule.milestones) {
       const msIssues = schedule.issues.filter((i) => i.milestone?.id === ms.id);
       if (msIssues.length === 0) continue;
-      groups.push({ milestoneId: ms.id, milestoneName: ms.name, workerRows: buildWorkerRows(msIssues), summary: buildMilestoneSummary(msIssues, schedule.startDate) });
+      groups.push({ milestoneId: ms.id, milestoneName: ms.name, workerRows: buildWorkerRows(msIssues), summary: buildMilestoneSummary(msIssues, schedule.startDate, schedule.usedWorkers) });
     }
 
     const noMsIssues = schedule.issues.filter((i) => !i.milestone);
     if (noMsIssues.length > 0) {
-      groups.push({ milestoneId: null, milestoneName: "No milestone", workerRows: buildWorkerRows(noMsIssues), summary: buildMilestoneSummary(noMsIssues, schedule.startDate) });
+      groups.push({ milestoneId: null, milestoneName: "No milestone", workerRows: buildWorkerRows(noMsIssues), summary: buildMilestoneSummary(noMsIssues, schedule.startDate, schedule.usedWorkers) });
     }
 
     return groups;
@@ -187,9 +187,14 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
   const chartWidth = totalVisibleCols * DAY_WIDTH;
 
   function separatorHeight(summary: MilestoneSummaryData): number {
-    let lines = 1; // line1 always
-    if (summary.line1b) lines++;
-    if (summary.line2) lines++;
+    // name + issueCount + (spacer + Today: + startedAt? + today + days + status)? + spacer + Target: + days + end
+    let lines = 1; // milestone name
+    lines += 1; // issueCount (bold)
+    if (summary.soFarLabel) {
+      lines += 4; // spacer + label + today + days + status
+      if (summary.startedAt) lines++;
+    }
+    lines += 4; // spacer + Target: + days + end
     return SEPARATOR_BASE + lines * SEPARATOR_LINE_HEIGHT;
   }
 
@@ -262,34 +267,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                     gap: 1,
                   }}
                 >
-                  <span
-                    title={group.milestoneName}
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.08em",
-                      color: "var(--iteration-line)",
-                    }}
-                  >
-                    {group.milestoneName}
-                  </span>
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 10, color: "var(--text-muted)" }}>
-                    {group.summary.line1}
-                  </span>
-                  {group.summary.line1b && (
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 10, color: "var(--text-muted)" }}>
-                      {group.summary.line1b}
-                    </span>
-                  )}
-                  {group.summary.line2 && (
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 10, color: "var(--text-muted)" }}>
-                      {group.summary.line2}{group.summary.line2Status && <span style={{ color: group.summary.line2Color ?? "var(--text-muted)" }}>{group.summary.line2Status}</span>}
-                    </span>
-                  )}
+                  <MilestoneHeader name={group.milestoneName} summary={group.summary} />
                 </div>
                 {group.workerRows.map((row) => (
                   <div key={row.worker} style={{ height: ROW_HEIGHT + ROW_GAP, display: "flex", alignItems: "center", padding: "0 12px", fontSize: 13, fontWeight: 600, color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
@@ -317,7 +295,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                         position: "absolute", left, width, top: 0, height: CYCLE_ROW_HEIGHT,
                         background: CYCLE_COLORS[i % CYCLE_COLORS.length],
                         display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 10, fontWeight: 600, color: "var(--text)", overflow: "hidden", whiteSpace: "nowrap",
+                        fontSize: 11, fontWeight: 600, color: "var(--text)", overflow: "hidden", whiteSpace: "nowrap",
                         borderLeft: "1px solid var(--border)", borderRight: "1px solid var(--border)",
                       }}
                     >
@@ -359,7 +337,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                     style={{
                       width: DAY_WIDTH, minWidth: DAY_WIDTH,
                       display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end",
-                      paddingBottom: 6, fontSize: 10,
+                      paddingBottom: 6, fontSize: 11,
                       color: h.isGrayed || isPast ? "var(--text-muted)" : "var(--text)",
                       opacity: h.isGrayed ? 0.5 : isPast ? 0.6 : 1,
                       borderLeft: h.col === todayCol ? "2px solid #ef4444" : (h.isCycleStart || h.isCycleEnd) ? "2px solid var(--border)" : h.isMonday ? "1px solid var(--border)" : "none",

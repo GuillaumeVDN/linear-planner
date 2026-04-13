@@ -153,66 +153,107 @@ export function BlockedIcon({ size = 12 }: { size?: number }) {
 }
 
 export interface MilestoneSummaryData {
-  line1: string;
-  line1b: string | null;
-  line2: string | null;
-  line2Status: string | null;
-  line2Color: string | null;
+  issueCount: string;
+  startedAt: string | null;
+  targetDays: string;
+  targetEnd: string;
+  soFarLabel: string | null;
+  soFarToday: string | null;
+  soFarDays: string | null;
+  soFarStatus: string | null;
+  soFarColor: string | null;
 }
 
-export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Date): MilestoneSummaryData {
+export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Date, numWorkers: number = 1): MilestoneSummaryData {
   const count = msIssues.length;
-  if (count === 0) return { line1: "0 issues", line1b: null, line2: null, line2Status: null, line2Color: null };
+  const empty: MilestoneSummaryData = { issueCount: `${count} issue${count !== 1 ? "s" : ""}`, startedAt: null, targetDays: "", targetEnd: "", soFarLabel: null, soFarToday: null, soFarDays: null, soFarStatus: null, soFarColor: null };
+  if (count === 0) return { ...empty, issueCount: "0 issues" };
 
   const estimatedIssues = msIssues.filter((i) => i.hasEstimate);
-  if (estimatedIssues.length === 0) return { line1: `${count} issue${count !== 1 ? "s" : ""}`, line1b: null, line2: null, line2Status: null, line2Color: null };
+  if (estimatedIssues.length === 0) return empty;
 
   const minStartDay = Math.min(...estimatedIssues.map((i) => i.startDay));
   const maxEndDay = Math.max(...estimatedIssues.map((i) => i.endDay));
 
   const hasStarted = estimatedIssues.some((i) => i.stateType === "started" || i.done);
   const allDone = estimatedIssues.every((i) => i.done);
-
-  const startStr = hasStarted
-    ? formatDate(dayToDate(startDate, minStartDay))
-    : `~${formatDate(dayToDate(startDate, minStartDay))}`;
   const endStr = allDone
     ? formatDate(dayToDate(startDate, maxEndDay - 1))
     : `~${formatDate(dayToDate(startDate, maxEndDay - 1))}`;
 
+  const w = Math.max(1, numWorkers);
+  const fmtDays = (d: number) => { const v = d / w; return v % 1 === 0 ? `${v}` : v.toFixed(1); };
+
   const totalEstimate = estimatedIssues.reduce((s, i) => s + i.estimate, 0);
 
-  const line1 = `${count} issue${count !== 1 ? "s" : ""} \u00B7 ${totalEstimate} working days`;
-  const line1b = `${startStr} to ${endStr}`;
+  const startedAt = hasStarted ? `Started: ${formatDate(dayToDate(startDate, minStartDay))}` : null;
 
-  // Second line: on-track status based on done + exceeding issues only
-  // "Exceeding" = in progress and daysSpent > estimate
+  // Progress tracking
   const trackableIssues = estimatedIssues.filter((i) => i.done || (i.daysSpent != null && i.daysSpent > i.estimate));
-  let line2: string | null = null;
-  let line2Status: string | null = null;
-  let line2Color: string | null = null;
+  let soFarLabel: string | null = null;
+  let soFarToday: string | null = null;
+  let soFarDays: string | null = null;
+  let soFarStatus: string | null = null;
+  let soFarColor: string | null = null;
 
   if (trackableIssues.length > 0) {
     const trackSpent = trackableIssues.reduce((s, i) => s + (i.daysSpent ?? 0), 0);
     const trackEstimate = trackableIssues.reduce((s, i) => s + i.estimate, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    soFarLabel = "Ongoing";
+    soFarToday = `Today: ${formatDate(today)}`;
+    soFarDays = `Progress: ${fmtDays(trackSpent)}/${fmtDays(trackEstimate)} estimated working days`;
     const diff = trackSpent - trackEstimate;
-    const prefix = `${trackableIssues.length} done in ${trackSpent}/${trackEstimate} days`;
     if (diff > 0) {
-      line2 = `${prefix} \u00B7 `;
-      line2Color = "#f97316";
-      line2Status = `+${diff} days`;
+      soFarColor = "#f97316";
+      soFarStatus = `+${fmtDays(diff)} days`;
     } else if (diff < 0) {
-      line2 = `${prefix} \u00B7 `;
-      line2Color = "#22c55e";
-      line2Status = `${diff} days`;
+      soFarColor = "#22c55e";
+      soFarStatus = `${fmtDays(diff)} days`;
     } else {
-      line2 = `${prefix} \u00B7 `;
-      line2Color = "#22c55e";
-      line2Status = "On time";
+      soFarColor = "#22c55e";
+      soFarStatus = "On time";
     }
   }
 
-  return { line1, line1b, line2, line2Status, line2Color };
+  return {
+    issueCount: `${count} issues`,
+    startedAt,
+    targetDays: `Estimate: ${fmtDays(totalEstimate)} working days`,
+    targetEnd: `End: ${endStr}`,
+    soFarLabel, soFarToday, soFarDays, soFarStatus, soFarColor,
+  };
+}
+
+const lineStyle: CSSProperties = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11, color: "var(--text-muted)" };
+const boldLineStyle: CSSProperties = { ...lineStyle, fontWeight: 600 };
+const indentLineStyle: CSSProperties = { ...lineStyle, paddingLeft: 8 };
+const spacerStyle: CSSProperties = { height: 3 };
+
+export function MilestoneHeader({ name, summary }: { name: string; summary: MilestoneSummaryData }) {
+  return (
+    <>
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--iteration-line)" }} title={name}>
+        {name}
+      </span>
+      <span style={boldLineStyle}>{summary.issueCount}</span>
+      {summary.soFarLabel && (
+        <>
+          <div style={spacerStyle} />
+          <span style={boldLineStyle}>{summary.soFarLabel}</span>
+          {summary.startedAt && <span style={indentLineStyle}>{summary.startedAt}</span>}
+          <span style={indentLineStyle}>{summary.soFarToday}</span>
+          <span style={indentLineStyle}>{summary.soFarDays}</span>
+          <span style={{ ...indentLineStyle, color: summary.soFarColor ?? "var(--text-muted)", fontWeight: 600 }}>{summary.soFarStatus}</span>
+        </>
+      )}
+      <div style={spacerStyle} />
+      <span style={boldLineStyle}>Target</span>
+      <span style={indentLineStyle}>{summary.targetDays}</span>
+      <span style={indentLineStyle}>{summary.targetEnd}</span>
+    </>
+  );
 }
 
 interface LegendProps {

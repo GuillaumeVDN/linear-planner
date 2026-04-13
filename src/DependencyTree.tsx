@@ -1,7 +1,7 @@
 import { useMemo, useRef, useEffect, useState, useCallback } from "react";
 import type { ScheduleResult, ScheduledIssue, MilestoneInfo } from "./scheduler";
 import { dayToDate, formatDate } from "./scheduler";
-import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, type MilestoneSummaryData } from "./StatusCircle";
+import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, MilestoneHeader, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, type MilestoneSummaryData } from "./StatusCircle";
 
 const NODE_WIDTH = 240;
 const NODE_HEIGHT = 72;
@@ -127,10 +127,14 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
 
     for (const ms of milestoneOrder) {
       const msIssues = schedule.issues.filter((i) => (i.milestone?.id ?? null) === ms.id);
-      const summary = buildMilestoneSummary(msIssues, schedule.startDate);
-      let headerLines = 2; // name + line1
-      if (summary.line1b) headerLines++;
-      if (summary.line2) headerLines++;
+      const summary = buildMilestoneSummary(msIssues, schedule.startDate, schedule.usedWorkers);
+      let headerLines = 1; // name
+      headerLines += 1; // issueCount
+      if (summary.soFarLabel) {
+        headerLines += 4; // spacer + label + today + days + status
+        if (summary.startedAt) headerLines++;
+      }
+      headerLines += 4; // spacer + Target: + days + end
       const msHeaderHeight = MS_HEADER_BASE + headerLines * MS_HEADER_LINE;
 
       const sectionYStart = currentY;
@@ -315,25 +319,7 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
                   gap: 2,
                 }}
               >
-                <span style={{
-                  fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-                  letterSpacing: "0.08em", color: "var(--iteration-line)",
-                }}>
-                  {section.name}
-                </span>
-                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                  {section.summary.line1}
-                </span>
-                {section.summary.line1b && (
-                  <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                    {section.summary.line1b}
-                  </span>
-                )}
-                {section.summary.line2 && (
-                  <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                    {section.summary.line2}{section.summary.line2Status && <span style={{ color: section.summary.line2Color ?? "var(--text-muted)" }}>{section.summary.line2Status}</span>}
-                  </span>
-                )}
+                <MilestoneHeader name={section.name} summary={section.summary} />
               </div>
             </div>
           ))}
