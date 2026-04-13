@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { scheduleIssues, isNonWorkingDay } from "./scheduler";
-import type { LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState } from "./linear";
+import type { LinearIssue, LinearMilestone, LinearWorkflowState } from "./linear";
 
 // --- Helpers ---
 
