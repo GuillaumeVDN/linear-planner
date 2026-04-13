@@ -1,14 +1,15 @@
 import { useMemo, useRef, useEffect, useState, useCallback } from "react";
 import type { ScheduleResult, ScheduledIssue, MilestoneInfo } from "./scheduler";
 import { dayToDate, formatDate } from "./scheduler";
-import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG } from "./StatusCircle";
+import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, type MilestoneSummaryData } from "./StatusCircle";
 
 const NODE_WIDTH = 240;
 const NODE_HEIGHT = 72;
 const H_GAP = 24;
 const V_GAP = 50;
 const PADDING = 40;
-const MS_HEADER_HEIGHT = 36;
+const MS_HEADER_BASE = 20;
+const MS_HEADER_LINE = 14;
 const MS_PADDING_BOTTOM = 16;
 
 interface TreeNode {
@@ -22,7 +23,8 @@ interface TreeNode {
 interface MilestoneSection {
   milestone: MilestoneInfo | null;
   name: string;
-  summaryText: string;
+  summary: MilestoneSummaryData;
+  headerHeight: number;
   nodes: TreeNode[];
   yStart: number;
   yEnd: number;
@@ -125,9 +127,14 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
 
     for (const ms of milestoneOrder) {
       const msIssues = schedule.issues.filter((i) => (i.milestone?.id ?? null) === ms.id);
+      const summary = buildMilestoneSummary(msIssues, schedule.startDate);
+      let headerLines = 2; // name + line1
+      if (summary.line1b) headerLines++;
+      if (summary.line2) headerLines++;
+      const msHeaderHeight = MS_HEADER_BASE + headerLines * MS_HEADER_LINE;
 
       const sectionYStart = currentY;
-      currentY += MS_HEADER_HEIGHT;
+      currentY += msHeaderHeight;
 
       // Group by depth
       const byDepth = new Map<number, ScheduledIssue[]>();
@@ -202,7 +209,8 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
       sections.push({
         milestone: ms.id ? schedule.milestones.find((m) => m.id === ms.id) ?? null : null,
         name: ms.name,
-        summaryText: buildMilestoneSummary(msIssues, schedule.startDate),
+        summary,
+        headerHeight: msHeaderHeight,
         nodes: sectionNodes,
         yStart: sectionYStart,
         yEnd: currentY,
@@ -298,12 +306,13 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
                   top: section.yStart,
                   left: 0,
                   right: 0,
-                  height: MS_HEADER_HEIGHT,
+                  height: section.headerHeight,
                   display: "flex",
-                  alignItems: "center",
+                  flexDirection: "column",
+                  justifyContent: "center",
                   padding: "0 24px",
                   borderTop: "2px solid var(--iteration-line)",
-                  gap: 8,
+                  gap: 2,
                 }}
               >
                 <span style={{
@@ -313,8 +322,18 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
                   {section.name}
                 </span>
                 <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                  {section.summaryText}
+                  {section.summary.line1}
                 </span>
+                {section.summary.line1b && (
+                  <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                    {section.summary.line1b}
+                  </span>
+                )}
+                {section.summary.line2 && (
+                  <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                    {section.summary.line2}{section.summary.line2Status && <span style={{ color: section.summary.line2Color ?? "var(--text-muted)" }}>{section.summary.line2Status}</span>}
+                  </span>
+                )}
               </div>
             </div>
           ))}
@@ -369,9 +388,7 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
                     <span style={{ fontFamily: "monospace", fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>
                       {node.issue.identifier}
                     </span>
-                    <span style={{ color: "var(--text-muted)", fontSize: 10 }}>
-                      {node.issue.hasEstimate ? `${node.issue.duration}d` : "No estimate"}
-                    </span>
+                    <DurationBadge issue={node.issue} style={{ fontSize: 10, color: "var(--text-muted)" }} />
                   </div>
                   <div
                     title={node.issue.title}
@@ -407,24 +424,18 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
             <div style={{ fontWeight: 600, marginBottom: 4 }}>
               {tooltipInfo.issue.identifier}: {tooltipInfo.issue.title}
             </div>
-            {tooltipInfo.issue.assigneeName && (
-              <div style={{ display: "flex", alignItems: "center", gap: 5, color: "var(--text-muted)", marginBottom: 2 }}>
-                <AssigneeAvatar url={tooltipInfo.issue.assigneeAvatarUrl} name={tooltipInfo.issue.assigneeName} size={14} />
-                <span>{tooltipInfo.issue.assigneeName}</span>
-              </div>
-            )}
             <div style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)" }}>
-              {tooltipInfo.issue.priority > 0 && <PriorityIcon priority={tooltipInfo.issue.priority} size={14} />}
-              {tooltipInfo.issue.priorityLabel !== "No priority" && <span>{tooltipInfo.issue.priorityLabel}</span>}
-              {tooltipInfo.issue.priorityLabel !== "No priority" && <span>&middot;</span>}
-              <span>
-                {tooltipInfo.issue.duration} working day{tooltipInfo.issue.duration > 1 ? "s" : ""}
-                {!tooltipInfo.issue.hasEstimate && " (no estimate)"} &middot; {tooltipInfo.issue.stateName}
-              </span>
+              {tooltipInfo.issue.assigneeName && <><AssigneeAvatar url={tooltipInfo.issue.assigneeAvatarUrl} name={tooltipInfo.issue.assigneeName} size={14} /><span>{tooltipInfo.issue.assigneeName}</span></>}
+              {tooltipInfo.issue.assigneeName && tooltipInfo.issue.priority > 0 && <span>&middot;</span>}
+              {tooltipInfo.issue.priority > 0 && <><PriorityIcon priority={tooltipInfo.issue.priority} size={14} /><span>{tooltipInfo.issue.priorityLabel}</span></>}
             </div>
-            <div style={{ color: "var(--text-muted)", marginTop: 2 }}>
-              {formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.startDay))} &rarr;{" "}
-              {formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.endDay - 1))}
+            <div style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)" }}>
+              <StatusCircle stateType={tooltipInfo.issue.stateType} color={tooltipInfo.issue.stateColor} progress={tooltipInfo.issue.stateProgress} size={12} />
+              <span>{tooltipInfo.issue.stateName}</span>
+              <span>&middot;</span>
+              <DurationBadge issue={tooltipInfo.issue} />
+              <span>&middot;</span>
+              <span>{formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.startDay))} &rarr; {formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.endDay - 1))}</span>
             </div>
             {!tooltipInfo.issue.done && tooltipInfo.issue.blockedBy.filter((b) => !b.done).length > 0 && (
               <div style={{ color: "var(--text-muted)", marginTop: 4, fontSize: 11 }}>

@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates } from "./linear";
+import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates } from "./linear";
 import type { LinearProject, LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState } from "./linear";
 import { scheduleIssues } from "./scheduler";
 import type { ScheduleResult } from "./scheduler";
 import { GanttChart } from "./GanttChart";
 import { DependencyTree } from "./DependencyTree";
+import { StatusCircle } from "./StatusCircle";
 
 // --- Routing helpers ---
 const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, ""); // e.g. "/linear-planner"
@@ -39,6 +40,8 @@ interface ProjectSettings {
   showWeekends: boolean;
   showHolidays: boolean;
   showCooldown: boolean;
+  startStatusName: string;
+  endStatusName: string;
 }
 
 const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
@@ -47,6 +50,8 @@ const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   showWeekends: false,
   showHolidays: true,
   showCooldown: true,
+  startStatusName: "",
+  endStatusName: "",
 };
 
 function loadGlobalSettings(): GlobalSettings | null {
@@ -80,6 +85,8 @@ function loadProjectSettings(projectId: string): ProjectSettings {
       showWeekends: data.showWeekends ?? false,
       showHolidays: data.showHolidays ?? true,
       showCooldown: data.showCooldown ?? true,
+      startStatusName: typeof data.startStatusName === "string" ? data.startStatusName : "",
+      endStatusName: typeof data.endStatusName === "string" ? data.endStatusName : "",
     };
   } catch {
     return DEFAULT_PROJECT_SETTINGS;
@@ -88,6 +95,94 @@ function loadProjectSettings(projectId: string): ProjectSettings {
 
 function saveProjectSettings(projectId: string, s: ProjectSettings) {
   localStorage.setItem(`${GLOBAL_STORAGE_KEY}:${projectId}`, JSON.stringify(s));
+}
+
+// --- Workflow state helpers ---
+
+const STATE_TYPE_ORDER: Record<string, number> = { backlog: 0, triage: 1, unstarted: 2, started: 3, completed: 4, canceled: 5 };
+
+function computeEffectiveEndStatus(endStatusName: string, states: LinearWorkflowState[]): string {
+  const candidates = states.filter((s) => s.type === "started" || s.type === "completed");
+  if (endStatusName && candidates.some((s) => s.name === endStatusName)) return endStatusName;
+  const merged = candidates.find((s) => s.type === "started" && s.name.toLowerCase().includes("merged"));
+  if (merged) return merged.name;
+  const completed = candidates.find((s) => s.type === "completed");
+  return completed ? completed.name : "";
+}
+
+function sortStates(states: LinearWorkflowState[]): LinearWorkflowState[] {
+  return [...states].sort((a, b) => {
+    const ta = STATE_TYPE_ORDER[a.type] ?? 9;
+    const tb = STATE_TYPE_ORDER[b.type] ?? 9;
+    if (ta !== tb) return ta - tb;
+    return a.position - b.position;
+  });
+}
+
+function getStateProgress(state: LinearWorkflowState, allStartedStates: LinearWorkflowState[]): number {
+  if (state.type === "completed") return 1;
+  if (state.type === "canceled") return 0;
+  if (state.type !== "started" || allStartedStates.length === 0) return 0;
+  const idx = allStartedStates.findIndex((s) => s.id === state.id);
+  if (idx < 0) return 0.5;
+  return (idx + 1) / (allStartedStates.length + 1);
+}
+
+function StatusSelect({ states, startedStates, value, onChange }: {
+  states: LinearWorkflowState[];
+  startedStates: LinearWorkflowState[];
+  value: string;
+  onChange: (name: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = states.find((s) => s.name === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ ...headerInputStyle, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", background: "var(--bg)", minWidth: 120 }}
+      >
+        {selected && <StatusCircle stateType={selected.type} color={selected.color} progress={getStateProgress(selected, startedStates)} size={12} />}
+        <span style={{ flex: 1, textAlign: "left" }}>{selected?.name ?? value}</span>
+        <span style={{ fontSize: 10, opacity: 0.5 }}>{open ? "\u25B2" : "\u25BC"}</span>
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, marginTop: 2, zIndex: 100,
+          background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 6,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.15)", minWidth: "100%", maxHeight: 260, overflowY: "auto",
+        }}>
+          {states.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => { onChange(s.name); setOpen(false); }}
+              style={{
+                display: "flex", alignItems: "center", gap: 6, width: "100%", padding: "6px 10px",
+                border: "none", background: s.name === value ? "var(--surface-hover)" : "transparent",
+                color: "var(--text)", fontSize: 13, cursor: "pointer", textAlign: "left",
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--surface-hover)"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = s.name === value ? "var(--surface-hover)" : "transparent"; }}
+            >
+              <StatusCircle stateType={s.type} color={s.color} progress={getStateProgress(s, startedStates)} size={12} />
+              {s.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // --- App ---
@@ -102,6 +197,9 @@ export default function App() {
   const [showWeekends, setShowWeekends] = useState(false);
   const [showHolidays, setShowHolidays] = useState(true);
   const [showCooldown, setShowCooldown] = useState(true);
+  const [startStatusName, setStartStatusName] = useState("");
+  const [endStatusName, setEndStatusName] = useState("");
+  const [doneEndDates, setDoneEndDates] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
@@ -113,6 +211,8 @@ export default function App() {
   const [chartStart, setChartStart] = useState<Date>(new Date());
 
   const apiKeyRef = useRef(apiKey);
+  const endStatusNameRef = useRef(endStatusName);
+  endStatusNameRef.current = endStatusName;
   apiKeyRef.current = apiKey;
 
   const sortedProjects = useMemo(
@@ -120,18 +220,38 @@ export default function App() {
     [projects],
   );
 
+  const startedStates = useMemo(
+    () => sortStates(workflowStates.filter((s) => s.type === "started")),
+    [workflowStates],
+  );
+
+  const endStatusCandidates = useMemo(
+    () => sortStates(workflowStates.filter((s) => s.type === "started" || s.type === "completed")),
+    [workflowStates],
+  );
+
+  const effectiveStartStatus = useMemo(() => {
+    if (startStatusName && startedStates.some((s) => s.name === startStatusName)) return startStatusName;
+    return startedStates.length > 0 ? startedStates[0].name : "";
+  }, [startStatusName, startedStates]);
+
+  const effectiveEndStatus = useMemo(
+    () => computeEffectiveEndStatus(endStatusName, workflowStates),
+    [endStatusName, workflowStates],
+  );
+
   const maxParallelism = useMemo(() => {
     if (projectIssues.length === 0) return 1;
-    const unlimited = scheduleIssues(projectIssues, projectIssues.length, chartStart, projectCycles, projectMilestones, workflowStates);
+    const unlimited = scheduleIssues(projectIssues, projectIssues.length, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates);
     return unlimited.usedWorkers;
-  }, [projectIssues, projectCycles, projectMilestones, workflowStates, chartStart]);
+  }, [projectIssues, projectCycles, projectMilestones, workflowStates, chartStart, effectiveEndStatus, doneEndDates]);
 
   const effectiveWorkers = Math.min(numWorkers, maxParallelism);
 
   const schedule: ScheduleResult | null = useMemo(() => {
     if (projectIssues.length === 0) return null;
-    return scheduleIssues(projectIssues, effectiveWorkers, chartStart, projectCycles, projectMilestones, workflowStates);
-  }, [projectIssues, projectCycles, projectMilestones, workflowStates, effectiveWorkers, chartStart]);
+    return scheduleIssues(projectIssues, effectiveWorkers, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates);
+  }, [projectIssues, projectCycles, projectMilestones, workflowStates, effectiveWorkers, chartStart, effectiveEndStatus, doneEndDates]);
 
   // Restore session on mount
   useEffect(() => {
@@ -163,6 +283,8 @@ export default function App() {
         setShowWeekends(ps.showWeekends);
         setShowHolidays(ps.showHolidays);
         setShowCooldown(ps.showCooldown);
+        setStartStatusName(ps.startStatusName);
+        setEndStatusName(ps.endStatusName);
 
         setSelectedProjectId(pid);
         setConnected(true);
@@ -182,9 +304,9 @@ export default function App() {
   // Save per-project settings when they change
   useEffect(() => {
     if (connected && selectedProjectId) {
-      saveProjectSettings(selectedProjectId, { numWorkers, mode, showWeekends, showHolidays, showCooldown });
+      saveProjectSettings(selectedProjectId, { numWorkers, mode, showWeekends, showHolidays, showCooldown, startStatusName, endStatusName });
     }
-  }, [connected, selectedProjectId, numWorkers, mode, showWeekends, showHolidays, showCooldown]);
+  }, [connected, selectedProjectId, numWorkers, mode, showWeekends, showHolidays, showCooldown, startStatusName, endStatusName]);
 
   // Update URL when project changes
   useEffect(() => {
@@ -204,6 +326,8 @@ export default function App() {
         setShowWeekends(ps.showWeekends);
         setShowHolidays(ps.showHolidays);
         setShowCooldown(ps.showCooldown);
+        setStartStatusName(ps.startStatusName);
+        setEndStatusName(ps.endStatusName);
         setSelectedProjectId(pid);
       }
     };
@@ -238,6 +362,8 @@ export default function App() {
     setShowWeekends(ps.showWeekends);
     setShowHolidays(ps.showHolidays);
     setShowCooldown(ps.showCooldown);
+    setStartStatusName(ps.startStatusName);
+    setEndStatusName(ps.endStatusName);
     setSelectedProjectId(projectId);
   }, []);
 
@@ -258,11 +384,11 @@ export default function App() {
         fetchProjectMilestones(apiKeyRef.current, projectId),
         fetchProjectWorkflowStates(apiKeyRef.current, projectId),
       ]);
+      setWorkflowStates(states);
       if (issues.length === 0) {
         setProjectIssues([]);
         setProjectCycles([]);
         setProjectMilestones([]);
-        setWorkflowStates([]);
         setError("No issues found in this project.");
         setLoading(false);
         return;
@@ -277,10 +403,30 @@ export default function App() {
           if (d < start) start = d;
         }
       }
+      // Fetch end dates for done issues from state history
+      const endName = computeEffectiveEndStatus(endStatusNameRef.current, states);
+      let endPosition: number | null = null;
+      for (const s of states) {
+        if (s.type === "started" && s.name === endName) {
+          if (endPosition === null || s.position < endPosition) endPosition = s.position;
+        }
+      }
+      const doneIds = issues.filter((i) => {
+        if (!i.startedAt) return false;
+        const t = i.state.type;
+        if (t === "completed" || t === "canceled") return true;
+        if (t === "started" && endPosition !== null && i.state.position >= endPosition) return true;
+        return false;
+      }).map((i) => i.id);
+
+      const endDates = doneIds.length > 0
+        ? await fetchIssueEndDates(apiKeyRef.current, doneIds, endName)
+        : new Map<string, string>();
+
+      setDoneEndDates(endDates);
       setProjectIssues(issues);
       setProjectCycles(cycles);
       setProjectMilestones(milestones);
-      setWorkflowStates(states);
       setChartStart(start);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to fetch issues");
@@ -359,6 +505,19 @@ export default function App() {
                 <button onClick={() => setNumWorkers((n) => Math.min(maxParallelism, n + 1))} disabled={numWorkers >= maxParallelism} style={stepperButtonStyle}>+</button>
               </div>
             </div>
+
+            {startedStates.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 13, color: "var(--text-muted)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  Start status
+                  <StatusSelect states={startedStates} startedStates={startedStates} value={effectiveStartStatus} onChange={setStartStatusName} />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  End status
+                  <StatusSelect states={endStatusCandidates} startedStates={startedStates} value={effectiveEndStatus} onChange={setEndStatusName} />
+                </div>
+              </div>
+            )}
 
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ display: "flex", borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>

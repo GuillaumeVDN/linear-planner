@@ -9,6 +9,7 @@ export interface LinearIssue {
   priority: number;
   priorityLabel: string;
   startedAt: string | null;
+  completedAt: string | null;
   state: { name: string; type: string; color: string; position: number };
   assignee: { id: string; name: string; avatarUrl: string | null } | null;
   projectMilestone: { id: string; name: string; sortOrder: number } | null;
@@ -230,6 +231,7 @@ export async function fetchProjectIssues(apiKey: string, projectId: string): Pro
               priority
               priorityLabel
               startedAt
+              completedAt
               assignee { id name avatarUrl }
               state { name type color position }
               projectMilestone { id name sortOrder }
@@ -257,4 +259,48 @@ export async function fetchProjectIssues(apiKey: string, projectId: string): Pro
   return allIssues.filter(
     (issue) => !issue.labels.nodes.some((l) => l.name === "\u{1F680} DoD")
   );
+}
+
+/**
+ * Fetch the date each issue entered a specific workflow state, by querying issue history.
+ * Returns a map of issueId → ISO date string.
+ */
+export async function fetchIssueEndDates(
+  apiKey: string,
+  issueIds: string[],
+  endStateName: string,
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (issueIds.length === 0 || !endStateName) return result;
+
+  for (let i = 0; i < issueIds.length; i += 5) {
+    const batch = issueIds.slice(i, i + 5);
+    const params = batch.map((_, idx) => `$id${idx}: String!`).join(", ");
+    const aliases = batch
+      .map((_, idx) => `i${idx}: issue(id: $id${idx}) { id history(first: 50) { nodes { createdAt toState { name } } } }`)
+      .join("\n");
+
+    const variables: Record<string, unknown> = {};
+    batch.forEach((id, idx) => { variables[`id${idx}`] = id; });
+
+    const data = await gql<Record<string, { id: string; history: { nodes: Array<{ createdAt: string; toState: { name: string } | null }> } }>>(
+      apiKey,
+      `query(${params}) { ${aliases} }`,
+      variables,
+    );
+
+    for (const key of Object.keys(data)) {
+      const issue = data[key];
+      if (!issue?.history?.nodes) continue;
+      // History is newest-first; first match = most recent transition to end state
+      for (const entry of issue.history.nodes) {
+        if (entry.toState?.name === endStateName) {
+          result.set(issue.id, entry.createdAt);
+          break;
+        }
+      }
+    }
+  }
+
+  return result;
 }

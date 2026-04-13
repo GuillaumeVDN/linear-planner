@@ -1,14 +1,15 @@
 import { useMemo, useRef, useEffect, useState } from "react";
 import type { ScheduleResult, ScheduledIssue, CyclePeriod } from "./scheduler";
 import { dayToDate, formatDate, isBankHoliday } from "./scheduler";
-import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG } from "./StatusCircle";
+import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, type MilestoneSummaryData } from "./StatusCircle";
 
 const ROW_HEIGHT = 36;
 const ROW_GAP = 4;
 const CYCLE_ROW_HEIGHT = 22;
 const DATE_ROW_HEIGHT = 50;
 const HEADER_HEIGHT = CYCLE_ROW_HEIGHT + DATE_ROW_HEIGHT;
-const SEPARATOR_HEIGHT = 52;
+const SEPARATOR_BASE = 30;
+const SEPARATOR_LINE_HEIGHT = 14;
 const DAY_WIDTH = 40;
 const LABEL_WIDTH = 220;
 
@@ -23,7 +24,7 @@ interface MilestoneGroup {
   milestoneId: string | null;
   milestoneName: string;
   workerRows: Array<{ worker: number; issues: ScheduledIssue[] }>;
-  summaryText: string;
+  summary: MilestoneSummaryData;
 }
 
 interface DayInfo {
@@ -64,7 +65,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
       const workerRows: MilestoneGroup["workerRows"] = [];
       for (let w = 0; w < numWorkers; w++) {
         const issues = msIssues.filter((i) => i.worker === w).sort((a, b) => a.startDay - b.startDay);
-        workerRows.push({ worker: w, issues });
+        if (issues.length > 0) workerRows.push({ worker: w, issues });
       }
       return workerRows;
     }
@@ -72,7 +73,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
     for (const ms of schedule.milestones) {
       const msIssues = schedule.issues.filter((i) => i.milestone?.id === ms.id);
       if (msIssues.length === 0) continue;
-      groups.push({ milestoneId: ms.id, milestoneName: ms.name, workerRows: buildWorkerRows(msIssues), summaryText: buildMilestoneSummary(msIssues, schedule.startDate) });
+      groups.push({ milestoneId: ms.id, milestoneName: ms.name, workerRows: buildWorkerRows(msIssues), summary: buildMilestoneSummary(msIssues, schedule.startDate) });
     }
 
     const noMsIssues = schedule.issues.filter((i) => !i.milestone);
@@ -185,13 +186,20 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
   const totalVisibleCols = visibleDays.length;
   const chartWidth = totalVisibleCols * DAY_WIDTH;
 
+  function separatorHeight(summary: MilestoneSummaryData): number {
+    let lines = 1; // line1 always
+    if (summary.line1b) lines++;
+    if (summary.line2) lines++;
+    return SEPARATOR_BASE + lines * SEPARATOR_LINE_HEIGHT;
+  }
+
   const totalVisualRows = useMemo(() => {
     let count = 0;
     for (const group of milestoneGroups) { count += 1 + group.workerRows.length; }
     return count;
   }, [milestoneGroups]);
 
-  const chartContentHeight = milestoneGroups.length * SEPARATOR_HEIGHT + totalVisualRows * (ROW_HEIGHT + ROW_GAP);
+  const chartContentHeight = milestoneGroups.reduce((h, g) => h + separatorHeight(g.summary), 0) + totalVisualRows * (ROW_HEIGHT + ROW_GAP);
 
   const todayCol = useMemo(() => {
     const to = schedule.todayOffset;
@@ -243,7 +251,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               <div key={group.milestoneId ?? "none"}>
                 <div
                   style={{
-                    height: SEPARATOR_HEIGHT,
+                    height: separatorHeight(group.summary),
                     display: "flex",
                     flexDirection: "column",
                     justifyContent: "center",
@@ -269,17 +277,19 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                   >
                     {group.milestoneName}
                   </span>
-                  <span
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      fontSize: 10,
-                      color: "var(--text-muted)",
-                    }}
-                  >
-                    {group.summaryText}
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 10, color: "var(--text-muted)" }}>
+                    {group.summary.line1}
                   </span>
+                  {group.summary.line1b && (
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 10, color: "var(--text-muted)" }}>
+                      {group.summary.line1b}
+                    </span>
+                  )}
+                  {group.summary.line2 && (
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 10, color: "var(--text-muted)" }}>
+                      {group.summary.line2}{group.summary.line2Status && <span style={{ color: group.summary.line2Color ?? "var(--text-muted)" }}>{group.summary.line2Status}</span>}
+                    </span>
+                  )}
                 </div>
                 {group.workerRows.map((row) => (
                   <div key={row.worker} style={{ height: ROW_HEIGHT + ROW_GAP, display: "flex", alignItems: "center", padding: "0 12px", fontSize: 13, fontWeight: 600, color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
@@ -393,7 +403,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               {/* Milestone groups */}
               {milestoneGroups.map((group) => (
                 <div key={group.milestoneId ?? "none"}>
-                  <div style={{ height: SEPARATOR_HEIGHT, borderTop: "2px solid var(--iteration-line)" }} />
+                  <div style={{ height: separatorHeight(group.summary), borderTop: "2px solid var(--iteration-line)" }} />
                   {group.workerRows.map((row) => (
                     <div key={row.worker} style={{ position: "relative", height: ROW_HEIGHT + ROW_GAP, display: "flex", alignItems: "center", borderBottom: "1px solid var(--border)" }}>
                       {row.issues.map((issue) => {
@@ -482,24 +492,18 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
             <div style={{ fontWeight: 600, marginBottom: 4 }}>
               {tooltipInfo.issue.identifier}: {tooltipInfo.issue.title}
             </div>
-            {tooltipInfo.issue.assigneeName && (
-              <div style={{ display: "flex", alignItems: "center", gap: 5, color: "var(--text-muted)", marginBottom: 2 }}>
-                <AssigneeAvatar url={tooltipInfo.issue.assigneeAvatarUrl} name={tooltipInfo.issue.assigneeName} size={14} />
-                <span>{tooltipInfo.issue.assigneeName}</span>
-              </div>
-            )}
             <div style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)" }}>
-              {tooltipInfo.issue.priority > 0 && <PriorityIcon priority={tooltipInfo.issue.priority} size={14} />}
-              {tooltipInfo.issue.priorityLabel !== "No priority" && <span>{tooltipInfo.issue.priorityLabel}</span>}
-              {tooltipInfo.issue.priorityLabel !== "No priority" && <span>&middot;</span>}
-              <span>
-                {tooltipInfo.issue.duration} working day{tooltipInfo.issue.duration > 1 ? "s" : ""}
-                {!tooltipInfo.issue.hasEstimate && " (no estimate)"} &middot; {tooltipInfo.issue.stateName}
-              </span>
+              {tooltipInfo.issue.assigneeName && <><AssigneeAvatar url={tooltipInfo.issue.assigneeAvatarUrl} name={tooltipInfo.issue.assigneeName} size={14} /><span>{tooltipInfo.issue.assigneeName}</span></>}
+              {tooltipInfo.issue.assigneeName && tooltipInfo.issue.priority > 0 && <span>&middot;</span>}
+              {tooltipInfo.issue.priority > 0 && <><PriorityIcon priority={tooltipInfo.issue.priority} size={14} /><span>{tooltipInfo.issue.priorityLabel}</span></>}
             </div>
-            <div style={{ color: "var(--text-muted)", marginTop: 2 }}>
-              {formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.startDay))} &rarr;{" "}
-              {formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.endDay - 1))}
+            <div style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)" }}>
+              <StatusCircle stateType={tooltipInfo.issue.stateType} color={tooltipInfo.issue.stateColor} progress={tooltipInfo.issue.stateProgress} size={12} />
+              <span>{tooltipInfo.issue.stateName}</span>
+              <span>&middot;</span>
+              <DurationBadge issue={tooltipInfo.issue} />
+              <span>&middot;</span>
+              <span>{formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.startDay))} &rarr; {formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.endDay - 1))}</span>
             </div>
             {!tooltipInfo.issue.done && tooltipInfo.issue.blockedBy.filter((b) => !b.done).length > 0 && (
               <div style={{ color: "var(--text-muted)", marginTop: 4, fontSize: 11 }}>

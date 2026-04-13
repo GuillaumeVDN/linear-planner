@@ -125,6 +125,24 @@ export function AssigneeAvatar({ url, name, size = 16 }: { url: string | null; n
   );
 }
 
+/** Colored duration label: green = done within estimate, orange = exceeded, yellow = in progress */
+export function DurationBadge({ issue, style }: { issue: ScheduledIssue; style?: CSSProperties }) {
+  const spent = issue.daysSpent;
+  const hasSpent = issue.hasEstimate && spent != null;
+  if (!hasSpent) {
+    return <span style={style}>{issue.estimate} working day{issue.estimate > 1 ? "s" : ""}{!issue.hasEstimate && " (no estimate)"}</span>;
+  }
+  if (issue.done) {
+    const color = spent <= issue.estimate ? "#22c55e" : "#f97316";
+    return <span style={{ ...style, color, fontWeight: 600 }}>{spent}/{issue.estimate} working days</span>;
+  }
+  if (spent !== issue.estimate) {
+    const color = spent > issue.estimate ? "#f97316" : "#eab308";
+    return <span style={{ ...style, color, fontWeight: 600 }}>{spent}/{issue.estimate} working days</span>;
+  }
+  return <span style={style}>{issue.estimate} working day{issue.estimate > 1 ? "s" : ""}</span>;
+}
+
 export function BlockedIcon({ size = 12 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 12 12" style={{ flexShrink: 0 }} fill="none">
@@ -134,12 +152,20 @@ export function BlockedIcon({ size = 12 }: { size?: number }) {
   );
 }
 
-export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Date): string {
+export interface MilestoneSummaryData {
+  line1: string;
+  line1b: string | null;
+  line2: string | null;
+  line2Status: string | null;
+  line2Color: string | null;
+}
+
+export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Date): MilestoneSummaryData {
   const count = msIssues.length;
-  if (count === 0) return "0 issues";
+  if (count === 0) return { line1: "0 issues", line1b: null, line2: null, line2Status: null, line2Color: null };
 
   const estimatedIssues = msIssues.filter((i) => i.hasEstimate);
-  if (estimatedIssues.length === 0) return `${count} issue${count !== 1 ? "s" : ""}`;
+  if (estimatedIssues.length === 0) return { line1: `${count} issue${count !== 1 ? "s" : ""}`, line1b: null, line2: null, line2Status: null, line2Color: null };
 
   const minStartDay = Math.min(...estimatedIssues.map((i) => i.startDay));
   const maxEndDay = Math.max(...estimatedIssues.map((i) => i.endDay));
@@ -154,7 +180,39 @@ export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Dat
     ? formatDate(dayToDate(startDate, maxEndDay - 1))
     : `~${formatDate(dayToDate(startDate, maxEndDay - 1))}`;
 
-  return `${count} issue${count !== 1 ? "s" : ""} \u00B7 ${startStr} to ${endStr}`;
+  const totalEstimate = estimatedIssues.reduce((s, i) => s + i.estimate, 0);
+
+  const line1 = `${count} issue${count !== 1 ? "s" : ""} \u00B7 ${totalEstimate} working days`;
+  const line1b = `${startStr} to ${endStr}`;
+
+  // Second line: on-track status based on done + exceeding issues only
+  // "Exceeding" = in progress and daysSpent > estimate
+  const trackableIssues = estimatedIssues.filter((i) => i.done || (i.daysSpent != null && i.daysSpent > i.estimate));
+  let line2: string | null = null;
+  let line2Status: string | null = null;
+  let line2Color: string | null = null;
+
+  if (trackableIssues.length > 0) {
+    const trackSpent = trackableIssues.reduce((s, i) => s + (i.daysSpent ?? 0), 0);
+    const trackEstimate = trackableIssues.reduce((s, i) => s + i.estimate, 0);
+    const diff = trackSpent - trackEstimate;
+    const prefix = `${trackableIssues.length} done in ${trackSpent}/${trackEstimate} days`;
+    if (diff > 0) {
+      line2 = `${prefix} \u00B7 `;
+      line2Color = "#f97316";
+      line2Status = `+${diff} days`;
+    } else if (diff < 0) {
+      line2 = `${prefix} \u00B7 `;
+      line2Color = "#22c55e";
+      line2Status = `${diff} days`;
+    } else {
+      line2 = `${prefix} \u00B7 `;
+      line2Color = "#22c55e";
+      line2Status = "On time";
+    }
+  }
+
+  return { line1, line1b, line2, line2Status, line2Color };
 }
 
 interface LegendProps {
