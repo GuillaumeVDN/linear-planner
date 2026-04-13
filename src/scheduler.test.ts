@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { scheduleIssues, isNonWorkingDay } from "./scheduler";
-import type { LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState } from "./linear";
+import type { LinearIssue, LinearMilestone, LinearWorkflowState } from "./linear";
 
 // --- Helpers ---
 
@@ -49,37 +49,8 @@ function findIssue(result: ReturnType<typeof scheduleIssues>, identifier: string
   return result.issues.find((i) => i.identifier === identifier);
 }
 
-// Fix "today" to MONDAY + 7 (next Monday) for deterministic tests
-let dateSpy: ReturnType<typeof vi.spyOn>;
-
-beforeEach(() => {
-  const fakeToday = addDays(MONDAY, 7); // Monday Apr 14
-  dateSpy = vi.spyOn(globalThis, "Date").mockImplementation(function (...args: unknown[]) {
-    if (args.length === 0) return new (vi.mocked(Date).getMockImplementation() ? Object.getPrototypeOf(fakeToday).constructor : Object.getPrototypeOf(fakeToday).constructor)(fakeToday.getTime());
-    // @ts-expect-error - dynamic constructor call
-    return new (Object.getPrototypeOf(fakeToday).constructor)(...args);
-  } as unknown as typeof Date);
-});
-
-afterEach(() => {
-  dateSpy?.mockRestore();
-});
-
-// Actually, mocking Date is tricky with the scheduler creating dates internally.
-// Let's use a simpler approach: set startDate far enough in the past and rely on
-// the scheduler's "today" being the real today. For deterministic tests we'll just
-// check relative ordering and properties rather than exact dates.
-
-// Clean up the mock approach — just use real dates and check properties
-afterEach(() => {
-  dateSpy?.mockRestore();
-});
-
-// Remove the fragile Date mock. Tests will use a startDate of MONDAY and
-// check relative properties (startDay, endDay, worker, done, etc.)
-beforeEach(() => {
-  dateSpy?.mockRestore();
-});
+// Tests use real dates and check relative properties (startDay, endDay, worker, done, etc.)
+// rather than exact calendar positions, to avoid fragile Date mocking.
 
 // =====================
 // TESTS

@@ -78,7 +78,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
 
     const noMsIssues = schedule.issues.filter((i) => !i.milestone);
     if (noMsIssues.length > 0) {
-      groups.push({ milestoneId: null, milestoneName: "No milestone", workerRows: buildWorkerRows(noMsIssues), summaryText: buildMilestoneSummary(noMsIssues, schedule.startDate) });
+      groups.push({ milestoneId: null, milestoneName: "No milestone", workerRows: buildWorkerRows(noMsIssues), summary: buildMilestoneSummary(noMsIssues, schedule.startDate) });
     }
 
     return groups;
