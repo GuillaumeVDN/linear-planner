@@ -248,10 +248,14 @@ export function MilestoneHeader({ name, summary }: { name: string; summary: Mile
           <span style={{ ...indentLineStyle, color: summary.soFarColor ?? "var(--text-muted)", fontWeight: 600 }}>{summary.soFarStatus}</span>
         </>
       )}
-      <div style={spacerStyle} />
-      <span style={boldLineStyle}>Target</span>
-      <span style={indentLineStyle}>{summary.targetDays}</span>
-      <span style={indentLineStyle}>{summary.targetEnd}</span>
+      {summary.targetDays && (
+        <>
+          <div style={spacerStyle} />
+          <span style={boldLineStyle}>Target</span>
+          <span style={indentLineStyle}>{summary.targetDays}</span>
+          <span style={indentLineStyle}>{summary.targetEnd}</span>
+        </>
+      )}
     </>
   );
 }

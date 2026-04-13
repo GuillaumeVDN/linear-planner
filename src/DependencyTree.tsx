@@ -134,7 +134,7 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
         headerLines += 4; // spacer + label + today + days + status
         if (summary.startedAt) headerLines++;
       }
-      headerLines += 4; // spacer + Target: + days + end
+      if (summary.targetDays) headerLines += 4; // spacer + Target + days + end
       const msHeaderHeight = MS_HEADER_BASE + headerLines * MS_HEADER_LINE;
 
       const sectionYStart = currentY;

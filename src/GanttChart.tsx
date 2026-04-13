@@ -194,7 +194,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
       lines += 4; // spacer + label + today + days + status
       if (summary.startedAt) lines++;
     }
-    lines += 4; // spacer + Target: + days + end
+    if (summary.targetDays) lines += 4; // spacer + Target + days + end
     return SEPARATOR_BASE + lines * SEPARATOR_LINE_HEIGHT;
   }
 
