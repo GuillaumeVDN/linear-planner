@@ -211,11 +211,6 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
   const totalVisibleCols = visibleDays.length;
   const chartWidth = totalVisibleCols * DAY_WIDTH;
 
-  const totalVisualRows = useMemo(() => {
-    let count = 0;
-    for (const group of milestoneGroups) { count += 1 + group.workerRows.length; }
-    return count;
-  }, [milestoneGroups]);
 
   const todayCol = useMemo(() => {
     const to = schedule.todayOffset;

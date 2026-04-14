@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect, useState, useCallback } from "react";
+import { useMemo, useRef, useState, useCallback } from "react";
 import type { ScheduleResult, ScheduledIssue, MilestoneInfo } from "./scheduler";
 import { dayToDate, formatDate } from "./scheduler";
 import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, MilestoneHeader, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, type MilestoneSummaryData } from "./StatusCircle";
@@ -54,18 +54,6 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
   }, [isDragging]);
 
   const handleMouseUp = useCallback(() => setIsDragging(false), []);
-
-  // Measure section content widths for syncing left/right columns
-  const [sectionWidths, setSectionWidths] = useState<Record<string, number>>({});
-  const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
-
-  useEffect(() => {
-    const widths: Record<string, number> = {};
-    for (const [key, el] of Object.entries(sectionRefs.current)) {
-      if (el) widths[key] = el.scrollWidth;
-    }
-    setSectionWidths(widths);
-  }, [schedule]);
 
   const sections = useMemo(() => {
     const issueById = new Map(schedule.issues.map((i) => [i.id, i]));
@@ -282,7 +270,6 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
               return (
                 <div
                   key={sectionKey}
-                  ref={(el) => { sectionRefs.current[sectionKey] = el; }}
                   style={{
                     position: "relative",
                     height: section.contentHeight,
