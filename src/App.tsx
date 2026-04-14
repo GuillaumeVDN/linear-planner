@@ -271,20 +271,22 @@ export default function App() {
         setApiKey(global.apiKey);
         setProjects(projs);
 
-        // Determine project from URL or pick first
+        // Determine project from URL (don't auto-select if none in URL)
         const urlProjectId = getProjectIdFromUrl();
         const match = urlProjectId ? projs.find((p) => p.id === urlProjectId) : null;
-        const pid = match ? urlProjectId! : projs[0].id;
+        const pid = match ? urlProjectId! : "";
 
         // Load per-project settings
-        const ps = loadProjectSettings(pid);
-        setNumWorkers(ps.numWorkers);
-        setMode(ps.mode);
-        setShowWeekends(ps.showWeekends);
-        setShowHolidays(ps.showHolidays);
-        setShowCooldown(ps.showCooldown);
-        setStartStatusName(ps.startStatusName);
-        setEndStatusName(ps.endStatusName);
+        if (pid) {
+          const ps = loadProjectSettings(pid);
+          setNumWorkers(ps.numWorkers);
+          setMode(ps.mode);
+          setShowWeekends(ps.showWeekends);
+          setShowHolidays(ps.showHolidays);
+          setShowCooldown(ps.showCooldown);
+          setStartStatusName(ps.startStatusName);
+          setEndStatusName(ps.endStatusName);
+        }
 
         setSelectedProjectId(pid);
         setConnected(true);
@@ -345,7 +347,7 @@ export default function App() {
         return;
       }
       setProjects(projs);
-      setSelectedProjectId(projs[0].id);
+      setSelectedProjectId("");
       setConnected(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to connect to Linear");
@@ -474,6 +476,7 @@ export default function App() {
           <>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <select value={selectedProjectId} onChange={(e) => handleProjectChange(e.target.value)} style={headerInputStyle}>
+                {!selectedProjectId && <option value="">Select a project…</option>}
                 {sortedProjects.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
