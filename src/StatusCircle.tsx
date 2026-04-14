@@ -135,7 +135,7 @@ export function DurationBadge({ issue, style }: { issue: ScheduledIssue; style?:
     return <span style={style}>{issue.estimate} working day{issue.estimate > 1 ? "s" : ""}</span>;
   }
   if (issue.done) {
-    const color = spent <= issue.estimate ? "#22c55e" : "#f97316";
+    const color = spent > issue.estimate ? "#f97316" : spent < issue.estimate ? "#22c55e" : "#15803d";
     return <span style={{ ...style, color, fontWeight: 600 }}>{spent}/{issue.estimate} working days</span>;
   }
   if (spent !== issue.estimate) {

@@ -407,7 +407,7 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
               {tooltipInfo.issue.assigneeName && tooltipInfo.issue.priority > 0 && <span>&middot;</span>}
               {tooltipInfo.issue.priority > 0 && <><PriorityIcon priority={tooltipInfo.issue.priority} size={14} /><span>{tooltipInfo.issue.priorityLabel}</span></>}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
               <StatusCircle stateType={tooltipInfo.issue.stateType} color={tooltipInfo.issue.stateColor} progress={tooltipInfo.issue.stateProgress} size={12} />
               <span>{tooltipInfo.issue.stateName}</span>
               <span>&middot;</span>
