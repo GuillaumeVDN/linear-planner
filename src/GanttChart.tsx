@@ -8,8 +8,6 @@ const ROW_GAP = 4;
 const CYCLE_ROW_HEIGHT = 22;
 const DATE_ROW_HEIGHT = 50;
 const HEADER_HEIGHT = CYCLE_ROW_HEIGHT + DATE_ROW_HEIGHT;
-const SEPARATOR_BASE = 30;
-const SEPARATOR_LINE_HEIGHT = 14;
 const DAY_WIDTH = 40;
 const LABEL_WIDTH = 220;
 
@@ -55,6 +53,8 @@ interface GanttChartProps {
 export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown, setShowWeekends, setShowHolidays, setShowCooldown }: GanttChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltipInfo, setTooltipInfo] = useState<{ issue: ScheduledIssue; x: number; y: number } | null>(null);
+  const [msHeaderHeights, setMsHeaderHeights] = useState<Record<string, number>>({});
+  const msHeaderRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const numWorkers = useMemo(() => Math.max(...schedule.issues.map((i) => i.worker), -1) + 1, [schedule]);
 
@@ -211,25 +211,11 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
   const totalVisibleCols = visibleDays.length;
   const chartWidth = totalVisibleCols * DAY_WIDTH;
 
-  function separatorHeight(summary: MilestoneSummaryData): number {
-    // name + issueCount + (spacer + label + status + today + days)? + (spacer + Remaining + days? + end)?
-    let lines = 1; // milestone name
-    lines += 1; // issueCount (bold)
-    if (summary.soFarLabel) {
-      lines += 4; // spacer + label + status + days
-      if (summary.startedAt) lines++;
-    }
-    if (summary.targetEnd) { lines += 3; if (summary.targetDays) lines++; } // spacer + Remaining + days? + end
-    return SEPARATOR_BASE + lines * SEPARATOR_LINE_HEIGHT;
-  }
-
   const totalVisualRows = useMemo(() => {
     let count = 0;
     for (const group of milestoneGroups) { count += 1 + group.workerRows.length; }
     return count;
   }, [milestoneGroups]);
-
-  const chartContentHeight = milestoneGroups.reduce((h, g) => h + separatorHeight(g.summary), 0) + totalVisualRows * (ROW_HEIGHT + ROW_GAP);
 
   const todayCol = useMemo(() => {
     const to = schedule.todayOffset;
@@ -248,6 +234,14 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
       containerRef.current.scrollLeft = Math.max(0, todayCol * DAY_WIDTH - 200);
     }
   }, [todayCol]);
+
+  useEffect(() => {
+    const heights: Record<string, number> = {};
+    for (const [key, el] of Object.entries(msHeaderRefs.current)) {
+      if (el) heights[key] = el.offsetHeight;
+    }
+    setMsHeaderHeights(heights);
+  }, [milestoneGroups]);
 
   return (
     <div>
@@ -280,12 +274,12 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
             {milestoneGroups.map((group) => (
               <div key={group.milestoneId ?? "none"}>
                 <div
+                  ref={(el) => { msHeaderRefs.current[group.milestoneId ?? "none"] = el; }}
                   style={{
-                    height: separatorHeight(group.summary),
                     display: "flex",
                     flexDirection: "column",
                     justifyContent: "center",
-                    padding: "0 12px",
+                    padding: "10px 12px",
                     borderTop: "2px solid var(--iteration-line)",
                     background: "var(--surface)",
                     overflow: "hidden",
@@ -382,31 +376,31 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
             <div style={{ position: "relative" }}>
               {/* Grayed columns */}
               {visibleDays.filter((h) => h.isGrayed).map((h) => (
-                <div key={`g-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: DAY_WIDTH, height: chartContentHeight, background: "var(--weekend)", pointerEvents: "none" }} />
+                <div key={`g-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: DAY_WIDTH, height: "100%", background: "var(--weekend)", pointerEvents: "none" }} />
               ))}
 
               {/* Monday grid lines */}
               {visibleDays.filter((h) => h.isMonday).map((h) => (
-                <div key={`gl-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: 1, height: chartContentHeight, background: "var(--border)", pointerEvents: "none" }} />
+                <div key={`gl-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: 1, height: "100%", background: "var(--border)", pointerEvents: "none" }} />
               ))}
 
               {/* Cycle boundary lines (gray, thick) */}
               {visibleDays.filter((h) => h.isCycleStart).map((h) => (
-                <div key={`cs-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: 2, height: chartContentHeight, background: "var(--border)", pointerEvents: "none", zIndex: 2 }} />
+                <div key={`cs-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: 2, height: "100%", background: "var(--border)", pointerEvents: "none", zIndex: 2 }} />
               ))}
               {visibleDays.filter((h) => h.isCycleEnd).map((h) => (
-                <div key={`ce-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: 2, height: chartContentHeight, background: "var(--border)", pointerEvents: "none", zIndex: 2 }} />
+                <div key={`ce-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: 2, height: "100%", background: "var(--border)", pointerEvents: "none", zIndex: 2 }} />
               ))}
 
               {/* Past overlay */}
               {todayCol > 0 && (
-                <div style={{ position: "absolute", left: 0, top: 0, width: todayCol * DAY_WIDTH, height: chartContentHeight, background: "rgba(128,128,128,0.15)", pointerEvents: "none", zIndex: 1 }} />
+                <div style={{ position: "absolute", left: 0, top: 0, width: todayCol * DAY_WIDTH, height: "100%", background: "rgba(128,128,128,0.15)", pointerEvents: "none", zIndex: 1 }} />
               )}
 
               {/* Milestone groups */}
               {milestoneGroups.map((group) => (
                 <div key={group.milestoneId ?? "none"}>
-                  <div style={{ height: separatorHeight(group.summary), borderTop: "2px solid var(--iteration-line)" }} />
+                  <div style={{ height: msHeaderHeights[group.milestoneId ?? "none"] ?? 0, borderTop: "2px solid var(--iteration-line)" }} />
                   {group.workerRows.map((row) => (
                     <div key={row.worker} style={{ position: "relative", height: ROW_HEIGHT + ROW_GAP, display: "flex", alignItems: "center", borderBottom: "1px solid var(--border)" }}>
                       {row.issues.map((issue) => {
