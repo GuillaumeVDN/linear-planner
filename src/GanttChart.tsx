@@ -314,7 +314,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                         background: CYCLE_COLORS[i % CYCLE_COLORS.length],
                         display: "flex", alignItems: "center", justifyContent: "center",
                         fontSize: 11, fontWeight: 600, color: "var(--text)", overflow: "hidden", whiteSpace: "nowrap",
-                        borderLeft: "1px solid var(--border)", borderRight: "1px solid var(--border)",
+                        borderLeft: cols[0] > 0 ? "1px solid var(--border)" : "none", borderRight: "1px solid var(--border)",
                       }}
                     >
                       {width > 50 ? cycle.label : ""}
@@ -358,7 +358,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                       paddingBottom: 6, fontSize: 11,
                       color: h.isGrayed || isPast ? "var(--text-muted)" : "var(--text)",
                       opacity: h.isGrayed ? 0.5 : isPast ? 0.6 : 1,
-                      borderLeft: h.col === todayCol ? "2px solid #ef4444" : (h.isCycleStart || h.isCycleEnd) ? "2px solid var(--border)" : h.isMonday ? "1px solid var(--border)" : "none",
+                      borderLeft: h.col === todayCol ? "2px solid #ef4444" : (h.col > 0 && (h.isCycleStart || h.isCycleEnd)) ? "2px solid var(--border)" : h.isMonday ? "1px solid var(--border)" : "none",
                       background: isPast ? "rgba(128,128,128,0.08)" : undefined,
                     }}
                   >
@@ -384,7 +384,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               ))}
 
               {/* Cycle boundary lines (gray, thick) */}
-              {visibleDays.filter((h) => h.isCycleStart).map((h) => (
+              {visibleDays.filter((h) => h.isCycleStart && h.col > 0).map((h) => (
                 <div key={`cs-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: 2, height: "100%", background: "var(--border)", pointerEvents: "none", zIndex: 2 }} />
               ))}
               {visibleDays.filter((h) => h.isCycleEnd).map((h) => (
