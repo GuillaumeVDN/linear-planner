@@ -212,14 +212,14 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
   const chartWidth = totalVisibleCols * DAY_WIDTH;
 
   function separatorHeight(summary: MilestoneSummaryData): number {
-    // name + issueCount + (spacer + Today: + startedAt? + today + days + status)? + spacer + Target: + days + end
+    // name + issueCount + (spacer + label + status + today + days)? + (spacer + Remaining + days? + end)?
     let lines = 1; // milestone name
     lines += 1; // issueCount (bold)
     if (summary.soFarLabel) {
-      lines += 4; // spacer + label + today + days + status
+      lines += 4; // spacer + label + status + days
       if (summary.startedAt) lines++;
     }
-    if (summary.targetDays) lines += 4; // spacer + Target + days + end
+    if (summary.targetEnd) { lines += 3; if (summary.targetDays) lines++; } // spacer + Remaining + days? + end
     return SEPARATOR_BASE + lines * SEPARATOR_LINE_HEIGHT;
   }
 
@@ -506,7 +506,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               <span>&middot;</span>
               <DurationBadge issue={tooltipInfo.issue} />
               <span>&middot;</span>
-              <span>{formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.startDay))} &rarr; {formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.endDay - 1))}</span>
+              <span>{tooltipInfo.issue.daysSpent === null ? "~" : ""}{formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.startDay))}</span><span style={{ position: "relative", top: -2 }}>→</span><span>{!tooltipInfo.issue.done ? "~" : ""}{formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.endDay - 1))}</span>
             </div>
             {!tooltipInfo.issue.done && tooltipInfo.issue.blockedBy.filter((b) => !b.done).length > 0 && (
               <div style={{ color: "var(--text-muted)", marginTop: 4, fontSize: 11 }}>

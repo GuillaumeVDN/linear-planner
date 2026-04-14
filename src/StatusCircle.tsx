@@ -130,7 +130,8 @@ export function DurationBadge({ issue, style }: { issue: ScheduledIssue; style?:
   const spent = issue.daysSpent;
   const hasSpent = issue.hasEstimate && spent != null;
   if (!hasSpent) {
-    return <span style={style}>{issue.estimate} working day{issue.estimate > 1 ? "s" : ""}{!issue.hasEstimate && " (no estimate)"}</span>;
+    if (!issue.hasEstimate) return <span style={style}>No estimate</span>;
+    return <span style={style}>{issue.estimate} working day{issue.estimate > 1 ? "s" : ""}</span>;
   }
   if (issue.done) {
     const color = spent <= issue.estimate ? "#22c55e" : "#f97316";
@@ -154,6 +155,7 @@ export function BlockedIcon({ size = 12 }: { size?: number }) {
 
 export interface MilestoneSummaryData {
   issueCount: string;
+  totalDays: string | null;
   startedAt: string | null;
   targetDays: string;
   targetEnd: string;
@@ -166,7 +168,7 @@ export interface MilestoneSummaryData {
 
 export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Date, numWorkers: number = 1): MilestoneSummaryData {
   const count = msIssues.length;
-  const empty: MilestoneSummaryData = { issueCount: `${count} issue${count !== 1 ? "s" : ""}`, startedAt: null, targetDays: "", targetEnd: "", soFarLabel: null, soFarToday: null, soFarDays: null, soFarStatus: null, soFarColor: null };
+  const empty: MilestoneSummaryData = { issueCount: `${count} issue${count !== 1 ? "s" : ""}`, totalDays: null, startedAt: null, targetDays: "", targetEnd: "", soFarLabel: null, soFarToday: null, soFarDays: null, soFarStatus: null, soFarColor: null };
   if (count === 0) return { ...empty, issueCount: "0 issues" };
 
   const estimatedIssues = msIssues.filter((i) => i.hasEstimate);
@@ -201,9 +203,9 @@ export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Dat
     const trackEstimate = trackableIssues.reduce((s, i) => s + i.estimate, 0);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    soFarLabel = "Ongoing";
+    soFarLabel = "Status";
     soFarToday = `Today: ${formatDate(today)}`;
-    soFarDays = `Progress: ${fmtDays(trackSpent)}/${fmtDays(trackEstimate)} estimated working days`;
+    soFarDays = `${fmtDays(trackSpent)}/${fmtDays(trackEstimate)} estimated working days so far`;
     const diff = trackSpent - trackEstimate;
     if (diff > 0) {
       soFarColor = "#f97316";
@@ -217,10 +219,19 @@ export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Dat
     }
   }
 
+  const totalDaysStr = `${fmtDays(totalEstimate)} working days`;
+
+  const doneCount = estimatedIssues.filter((i) => i.done).length;
+  const doneEstimate = estimatedIssues.filter((i) => i.done).reduce((s, i) => s + i.estimate, 0);
+  const remainingCount = estimatedIssues.length - doneCount;
+  const remaining = totalEstimate - doneEstimate;
+  const remainingStr = remaining > 0 ? `${remainingCount} issue${remainingCount !== 1 ? "s" : ""} · ~${fmtDays(remaining)} working days` : "";
+
   return {
     issueCount: `${count} issues`,
+    totalDays: totalDaysStr,
     startedAt,
-    targetDays: `Estimate: ${fmtDays(totalEstimate)} working days`,
+    targetDays: remainingStr,
     targetEnd: `End: ${endStr}`,
     soFarLabel, soFarToday, soFarDays, soFarStatus, soFarColor,
   };
@@ -237,22 +248,21 @@ export function MilestoneHeader({ name, summary }: { name: string; summary: Mile
       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--iteration-line)" }} title={name}>
         {name}
       </span>
-      <span style={boldLineStyle}>{summary.issueCount}</span>
+      <span style={boldLineStyle}>{summary.issueCount}{summary.totalDays ? ` · ${summary.totalDays}` : ""}</span>
       {summary.soFarLabel && (
         <>
           <div style={spacerStyle} />
           <span style={boldLineStyle}>{summary.soFarLabel}</span>
-          {summary.startedAt && <span style={indentLineStyle}>{summary.startedAt}</span>}
-          <span style={indentLineStyle}>{summary.soFarToday}</span>
-          <span style={indentLineStyle}>{summary.soFarDays}</span>
           <span style={{ ...indentLineStyle, color: summary.soFarColor ?? "var(--text-muted)", fontWeight: 600 }}>{summary.soFarStatus}</span>
+          {summary.startedAt && <span style={indentLineStyle}>{summary.startedAt}</span>}
+          <span style={indentLineStyle}>{summary.soFarDays}</span>
         </>
       )}
-      {summary.targetDays && (
+      {summary.targetEnd && (
         <>
           <div style={spacerStyle} />
-          <span style={boldLineStyle}>Target</span>
-          <span style={indentLineStyle}>{summary.targetDays}</span>
+          <span style={boldLineStyle}>Remaining</span>
+          {summary.targetDays && <span style={indentLineStyle}>{summary.targetDays}</span>}
           <span style={indentLineStyle}>{summary.targetEnd}</span>
         </>
       )}
