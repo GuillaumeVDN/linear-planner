@@ -252,7 +252,6 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
         style={{
           overflow: "auto",
           background: "var(--surface)",
-          borderRadius: 8,
           border: "1px solid var(--border)",
           position: "relative",
         }}

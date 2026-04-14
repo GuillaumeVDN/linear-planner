@@ -234,7 +234,6 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
           overflowX: "auto",
           overflowY: "hidden",
           background: "var(--surface)",
-          borderRadius: 8,
           border: "1px solid var(--border)",
           position: "relative",
           cursor: isDragging ? "grabbing" : "default",
