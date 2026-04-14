@@ -1,10 +1,11 @@
 import { type CSSProperties, useMemo } from "react";
 import type { ScheduledIssue } from "./scheduler";
-import { dayToDate, formatDate } from "./scheduler";
+import { dayToDate, formatDate, isNonWorkingDay } from "./scheduler";
 
 export const BLOCKED_STRIPE =
-  "repeating-linear-gradient(-45deg, transparent, transparent 5px, rgba(100,100,100,0.1) 5px, rgba(100,100,100,0.1) 10px)";
-export const NO_ESTIMATE_BG = "rgba(128,128,128,0.15)";
+  "repeating-linear-gradient(-45deg, transparent 0px, transparent 5px, rgba(150,150,150,0.15) 5px, rgba(150,150,150,0.15) 10px)";
+export const NO_ESTIMATE_BG =
+  "repeating-linear-gradient(-45deg, transparent, transparent 5px, rgba(234,145,50,0.13) 5px, rgba(234,145,50,0.13) 10px)";
 
 /** Pie arc path from 12 o'clock sweeping clockwise by `progress` (0-1) */
 function pieArc(cx: number, cy: number, r: number, progress: number): string {
@@ -160,7 +161,7 @@ export interface MilestoneSummaryData {
   targetDays: string;
   targetEnd: string;
   soFarLabel: string | null;
-  soFarToday: string | null;
+  soFarCount: string | null;
   soFarDays: string | null;
   soFarStatus: string | null;
   soFarColor: string | null;
@@ -168,7 +169,7 @@ export interface MilestoneSummaryData {
 
 export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Date, numWorkers: number = 1): MilestoneSummaryData {
   const count = msIssues.length;
-  const empty: MilestoneSummaryData = { issueCount: `${count} issue${count !== 1 ? "s" : ""}`, totalDays: null, startedAt: null, targetDays: "", targetEnd: "", soFarLabel: null, soFarToday: null, soFarDays: null, soFarStatus: null, soFarColor: null };
+  const empty: MilestoneSummaryData = { issueCount: `${count} issue${count !== 1 ? "s" : ""}`, totalDays: null, startedAt: null, targetDays: "", targetEnd: "", soFarLabel: null, soFarCount: null, soFarDays: null, soFarStatus: null, soFarColor: null };
   if (count === 0) return { ...empty, issueCount: "0 issues" };
 
   const estimatedIssues = msIssues.filter((i) => i.hasEstimate);
@@ -190,40 +191,49 @@ export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Dat
 
   const startedAt = hasStarted ? `Started: ${formatDate(dayToDate(startDate, minStartDay))}` : null;
 
-  // Progress tracking
-  const trackableIssues = estimatedIssues.filter((i) => i.done || (i.daysSpent != null && i.daysSpent > i.estimate));
+  // Progress tracking: compare done estimate vs elapsed wall-clock working days
+  const startedIssues = estimatedIssues.filter((i) => i.daysSpent != null);
   let soFarLabel: string | null = null;
-  let soFarToday: string | null = null;
+  let soFarCount: string | null = null;
   let soFarDays: string | null = null;
   let soFarStatus: string | null = null;
   let soFarColor: string | null = null;
 
-  if (trackableIssues.length > 0) {
-    const trackSpent = trackableIssues.reduce((s, i) => s + (i.daysSpent ?? 0), 0);
-    const trackEstimate = trackableIssues.reduce((s, i) => s + i.estimate, 0);
+  if (startedIssues.length > 0) {
+    const doneIssues = estimatedIssues.filter((i) => i.done);
+    const earliestStartDay = Math.min(...startedIssues.map((i) => i.startDay));
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    soFarLabel = "Status";
-    soFarToday = `Today: ${formatDate(today)}`;
-    soFarDays = `${fmtDays(trackSpent)}/${fmtDays(trackEstimate)} estimated working days so far`;
-    const diff = trackSpent - trackEstimate;
-    if (diff > 0) {
+    // Count working days from earliest start to today
+    let elapsed = 0;
+    const startDateCal = dayToDate(startDate, earliestStartDay);
+    for (let d = new Date(startDateCal); d <= today; d.setDate(d.getDate() + 1)) {
+      if (!isNonWorkingDay(d)) elapsed++;
+    }
+    // Sum of original estimates for done issues (what was planned for the completed work)
+    const doneEstimateTotal = doneIssues.reduce((s, i) => s + i.estimate, 0);
+    const estimatedPerWorker = doneEstimateTotal / w;
+    soFarLabel = "Completed";
+    soFarCount = `${doneIssues.length} issue${doneIssues.length !== 1 ? "s" : ""} · ${elapsed} / ~${fmtDays(doneEstimateTotal)} working days`;
+    const fmtDiff = (d: number) => { const v = d / w; return v % 1 === 0 ? `${v}` : v.toFixed(1); };
+    const diff = elapsed - estimatedPerWorker;
+    if (diff > 1) {
       soFarColor = "#f97316";
-      soFarStatus = `+${fmtDays(diff)} days`;
+      soFarStatus = `${fmtDiff(diff * w)} days behind`;
     } else if (diff < 0) {
       soFarColor = "#22c55e";
-      soFarStatus = `${fmtDays(diff)} days`;
+      soFarStatus = `${fmtDiff(Math.abs(diff) * w)} days ahead`;
     } else {
-      soFarColor = "#22c55e";
+      soFarColor = "#15803d";
       soFarStatus = "On time";
     }
   }
 
-  const totalDaysStr = `${fmtDays(totalEstimate)} working days`;
+  const totalDaysStr = `~${fmtDays(totalEstimate)} working days`;
 
-  const doneCount = estimatedIssues.filter((i) => i.done).length;
+  const allDoneCount = msIssues.filter((i) => i.done).length;
   const doneEstimate = estimatedIssues.filter((i) => i.done).reduce((s, i) => s + i.estimate, 0);
-  const remainingCount = estimatedIssues.length - doneCount;
+  const remainingCount = count - allDoneCount;
   const remaining = totalEstimate - doneEstimate;
   const remainingStr = remaining > 0 ? `${remainingCount} issue${remainingCount !== 1 ? "s" : ""} · ~${fmtDays(remaining)} working days` : "";
 
@@ -233,7 +243,7 @@ export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Dat
     startedAt,
     targetDays: remainingStr,
     targetEnd: `End: ${endStr}`,
-    soFarLabel, soFarToday, soFarDays, soFarStatus, soFarColor,
+    soFarLabel, soFarCount, soFarDays, soFarStatus, soFarColor,
   };
 }
 
@@ -249,13 +259,13 @@ export function MilestoneHeader({ name, summary }: { name: string; summary: Mile
         {name}
       </span>
       <span style={boldLineStyle}>{summary.issueCount}{summary.totalDays ? ` · ${summary.totalDays}` : ""}</span>
+      {summary.startedAt && <span style={lineStyle}>{summary.startedAt}</span>}
       {summary.soFarLabel && (
         <>
           <div style={spacerStyle} />
           <span style={boldLineStyle}>{summary.soFarLabel}</span>
+          <span style={indentLineStyle}>{summary.soFarCount}</span>
           <span style={{ ...indentLineStyle, color: summary.soFarColor ?? "var(--text-muted)", fontWeight: 600 }}>{summary.soFarStatus}</span>
-          {summary.startedAt && <span style={indentLineStyle}>{summary.startedAt}</span>}
-          <span style={indentLineStyle}>{summary.soFarDays}</span>
         </>
       )}
       {summary.targetEnd && (
