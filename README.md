@@ -3,13 +3,14 @@
 A tool to visualize the parallelization and dependencies of Linear issues from a given project.
 
 Two view modes:
-- Timeline: a Gantt-like diagram dispatching tasks given a number of people working in parallel on the project
+- Timeline: a Gantt-like diagram dispatching tasks given a number of people working in parallel on the project.
 - Dependency tree: shows vertical relationships between issues.
 
-It calculates dependencies based on the 'blocked by' related status of the issues.
-The time and dates of issues are estimated from the 'complexity' of issues: 1 point = 1 working day for one person.
-
 Both views are split vertically using Linear milestones.
+
+The app calculates dependencies based on the 'blocked by' related status of the issues.
+The time and dates of issues are either taken from Linear (date at which the ticket changed to the given status) or estimated from the 'complexity' of issues: 1 point = 1 working day for one person.
+Issues that are done are shown are not considered for future scheduling and are shown in their own separate lanes in the timeline view.
 
 ## Screenshots 
 
