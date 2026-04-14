@@ -58,6 +58,30 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
 
   const numWorkers = useMemo(() => Math.max(...schedule.issues.map((i) => i.worker), -1) + 1, [schedule]);
 
+  // Compute the set of day ranges (cycles & cooldowns) that contain no scheduled issues,
+  // so we can hide their columns entirely.
+  const emptyRanges = useMemo(() => {
+    const ranges: Array<[number, number]> = [];
+    for (const cycle of schedule.cycles) {
+      if (!schedule.issues.some((i) => i.startDay < cycle.endDay && i.endDay > cycle.startDay)) {
+        ranges.push([cycle.startDay, cycle.endDay]);
+      }
+    }
+    for (let i = 0; i < schedule.cycles.length - 1; i++) {
+      const gapStart = schedule.cycles[i].endDay;
+      const gapEnd = schedule.cycles[i + 1].startDay;
+      if (gapEnd <= gapStart) continue;
+      if (!schedule.issues.some((si) => si.startDay < gapEnd && si.endDay > gapStart)) {
+        ranges.push([gapStart, gapEnd]);
+      }
+    }
+    return ranges;
+  }, [schedule.cycles, schedule.issues]);
+
+  function isInEmptyRange(day: number): boolean {
+    return emptyRanges.some(([start, end]) => day >= start && day < end);
+  }
+
   const milestoneGroups = useMemo(() => {
     const groups: MilestoneGroup[] = [];
 
@@ -125,6 +149,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
       if (!showWeekends && d.isWeekend) continue;
       if (!showHolidays && d.isHoliday) continue;
       if (!showCooldown && d.isOutsideCycle) continue;
+      if (isInEmptyRange(d.day)) continue;
       // Compute week number to detect week boundaries even when Monday is hidden
       const weekNum = Math.floor((d.day + dayToDate(schedule.startDate, 0).getDay()) / 7);
       const isWeekStart = lastVisibleWeek >= 0 && weekNum !== lastVisibleWeek;
@@ -158,7 +183,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
       col++;
     }
     return result;
-  }, [allDays, showWeekends, showHolidays, showCooldown]);
+  }, [allDays, showWeekends, showHolidays, showCooldown, emptyRanges]);
 
   // Map calendar day offset → visual column (or -1 if hidden)
   const dayToCol = useMemo(() => {
