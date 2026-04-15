@@ -1,4 +1,5 @@
 FROM node:22-alpine AS build
+ARG VITE_LINEAR_CLIENT_ID
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm install

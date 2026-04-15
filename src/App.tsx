@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates } from "./linear";
 import type { LinearProject, LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState } from "./linear";
+import { startLogin, handleOAuthCallback, getCallbackPath, isAuthenticated, clearTokens, logout } from "./auth";
 import { scheduleIssues } from "./scheduler";
 import type { ScheduleResult } from "./scheduler";
 import { GanttChart } from "./GanttChart";
@@ -15,7 +16,7 @@ function getProjectIdFromUrl(): string | null {
   const prefix = BASE_PATH + "/";
   if (path.startsWith(prefix)) {
     const rest = path.slice(prefix.length).replace(/\/$/, "");
-    if (rest && rest !== "") return rest;
+    if (rest && rest !== "" && rest !== "callback") return rest;
   }
   return null;
 }
@@ -29,10 +30,6 @@ function navigateToProject(projectId: string | null) {
 const GLOBAL_STORAGE_KEY = "linear-planner";
 
 type Mode = "workers" | "tree";
-
-interface GlobalSettings {
-  apiKey: string;
-}
 
 interface ProjectSettings {
   numWorkers: number;
@@ -53,26 +50,6 @@ const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   startStatusName: "",
   endStatusName: "",
 };
-
-function loadGlobalSettings(): GlobalSettings | null {
-  try {
-    const raw = localStorage.getItem(GLOBAL_STORAGE_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (typeof data.apiKey !== "string" || !data.apiKey) return null;
-    return { apiKey: data.apiKey };
-  } catch {
-    return null;
-  }
-}
-
-function saveGlobalSettings(s: GlobalSettings) {
-  localStorage.setItem(GLOBAL_STORAGE_KEY, JSON.stringify(s));
-}
-
-function clearGlobalSettings() {
-  localStorage.removeItem(GLOBAL_STORAGE_KEY);
-}
 
 function loadProjectSettings(projectId: string): ProjectSettings {
   try {
@@ -189,7 +166,6 @@ function StatusSelect({ states, startedStates, value, onChange }: {
 
 export default function App() {
   const [connected, setConnected] = useState(false);
-  const [apiKey, setApiKey] = useState("");
   const [projects, setProjects] = useState<LinearProject[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [numWorkers, setNumWorkers] = useState(2);
@@ -210,10 +186,8 @@ export default function App() {
   const [workflowStates, setWorkflowStates] = useState<LinearWorkflowState[]>([]);
   const [chartStart, setChartStart] = useState<Date>(new Date());
 
-  const apiKeyRef = useRef(apiKey);
   const endStatusNameRef = useRef(endStatusName);
   endStatusNameRef.current = endStatusName;
-  apiKeyRef.current = apiKey;
 
   const sortedProjects = useMemo(
     () => [...projects].sort((a, b) => a.name.localeCompare(b.name)),
@@ -253,30 +227,66 @@ export default function App() {
     return scheduleIssues(projectIssues, effectiveWorkers, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates);
   }, [projectIssues, projectCycles, projectMilestones, workflowStates, effectiveWorkers, chartStart, effectiveEndStatus, doneEndDates]);
 
-  // Restore session on mount
+  // Restore session on mount (or handle OAuth callback)
   useEffect(() => {
-    const global = loadGlobalSettings();
-    if (!global) {
+    const callbackPath = getCallbackPath();
+    const pathname = window.location.pathname;
+
+    // Handle OAuth callback
+    if (pathname === callbackPath || pathname === callbackPath + "/") {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("code");
+      const state = params.get("state");
+
+      if (code && state) {
+        handleOAuthCallback(code, state)
+          .then(async () => {
+            window.history.replaceState(null, "", BASE_PATH + "/");
+            const projs = await fetchProjects();
+            if (projs.length === 0) {
+              clearTokens();
+              setError("No projects found in your Linear workspace.");
+              setRestoring(false);
+              return;
+            }
+            setProjects(projs);
+            setConnected(true);
+            setRestoring(false);
+          })
+          .catch((e) => {
+            window.history.replaceState(null, "", BASE_PATH + "/");
+            setError(e instanceof Error ? e.message : "OAuth authentication failed");
+            setRestoring(false);
+          });
+        return;
+      }
+
+      // No code/state in callback URL, redirect to main
+      window.history.replaceState(null, "", BASE_PATH + "/");
+    }
+
+    // Normal session restoration from stored tokens
+    if (!isAuthenticated()) {
+      // Clean up legacy API key storage
+      localStorage.removeItem(GLOBAL_STORAGE_KEY);
       setRestoring(false);
       return;
     }
+
     (async () => {
       try {
-        const projs = await fetchProjects(global.apiKey);
+        const projs = await fetchProjects();
         if (projs.length === 0) {
-          clearGlobalSettings();
+          clearTokens();
           setRestoring(false);
           return;
         }
-        setApiKey(global.apiKey);
         setProjects(projs);
 
-        // Determine project from URL (don't auto-select if none in URL)
         const urlProjectId = getProjectIdFromUrl();
         const match = urlProjectId ? projs.find((p) => p.id === urlProjectId) : null;
         const pid = match ? urlProjectId! : "";
 
-        // Load per-project settings
         if (pid) {
           const ps = loadProjectSettings(pid);
           setNumWorkers(ps.numWorkers);
@@ -291,17 +301,12 @@ export default function App() {
         setSelectedProjectId(pid);
         setConnected(true);
       } catch {
-        clearGlobalSettings();
+        clearTokens();
       } finally {
         setRestoring(false);
       }
     })();
   }, []);
-
-  // Save global settings (API key)
-  useEffect(() => {
-    if (connected) saveGlobalSettings({ apiKey });
-  }, [connected, apiKey]);
 
   // Save per-project settings when they change
   useEffect(() => {
@@ -337,25 +342,6 @@ export default function App() {
     return () => window.removeEventListener("popstate", handler);
   }, [selectedProjectId, projects]);
 
-  const handleConnect = useCallback(async () => {
-    setError(null);
-    setLoading(true);
-    try {
-      const projs = await fetchProjects(apiKey);
-      if (projs.length === 0) {
-        setError("No projects found in your Linear workspace.");
-        return;
-      }
-      setProjects(projs);
-      setSelectedProjectId("");
-      setConnected(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to connect to Linear");
-    } finally {
-      setLoading(false);
-    }
-  }, [apiKey]);
-
   // When project changes, load per-project settings and fetch data
   const handleProjectChange = useCallback((projectId: string) => {
     const ps = loadProjectSettings(projectId);
@@ -381,10 +367,10 @@ export default function App() {
     setLoading(true);
     try {
       const [issues, cycles, milestones, states] = await Promise.all([
-        fetchProjectIssues(apiKeyRef.current, projectId),
-        fetchProjectCycles(apiKeyRef.current, projectId),
-        fetchProjectMilestones(apiKeyRef.current, projectId),
-        fetchProjectWorkflowStates(apiKeyRef.current, projectId),
+        fetchProjectIssues(projectId),
+        fetchProjectCycles(projectId),
+        fetchProjectMilestones(projectId),
+        fetchProjectWorkflowStates(projectId),
       ]);
       setWorkflowStates(states);
       if (issues.length === 0) {
@@ -422,7 +408,7 @@ export default function App() {
       }).map((i) => i.id);
 
       const endDates = doneIds.length > 0
-        ? await fetchIssueEndDates(apiKeyRef.current, doneIds, endName)
+        ? await fetchIssueEndDates(doneIds, endName)
         : new Map<string, string>();
 
       setDoneEndDates(endDates);
@@ -446,6 +432,18 @@ export default function App() {
     }
   }, [connected, selectedProjectId, loadProject]);
 
+  const handleDisconnect = useCallback(async () => {
+    await logout();
+    setConnected(false);
+    setProjectIssues([]);
+    setProjectCycles([]);
+    setProjectMilestones([]);
+    setWorkflowStates([]);
+    setProjects([]);
+    setSelectedProjectId("");
+    navigateToProject(null);
+  }, []);
+
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       <header style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "var(--surface)", display: "flex", flexDirection: "column", gap: 8 }}>
@@ -453,18 +451,7 @@ export default function App() {
           <h1 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Linear planner</h1>
           {connected && (
             <button
-              onClick={() => {
-                clearGlobalSettings();
-                setConnected(false);
-                setProjectIssues([]);
-                setProjectCycles([]);
-                setProjectMilestones([]);
-                setWorkflowStates([]);
-                setProjects([]);
-                setApiKey("");
-                setSelectedProjectId("");
-                navigateToProject(null);
-              }}
+              onClick={handleDisconnect}
               style={{ ...buttonStyle, background: "transparent", color: "var(--text-muted)", padding: "4px 12px", fontSize: 12, marginLeft: "auto" }}
             >
               Disconnect
@@ -532,16 +519,27 @@ export default function App() {
           <div style={centerCard}>
             <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Connect to Linear</h2>
             <p style={{ color: "var(--text-muted)", marginBottom: 24, fontSize: 14 }}>
-              Enter your Linear API key to get started.<br />
-              <a href="https://linear.app/dashdoc/settings/account/security/api-keys/new" target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "var(--accent-hover)" }}>
-                Create a new API key
-              </a>
-              <span style={{ fontSize: 12, display: "block", marginTop: 4 }}>Make it read-only and scoped to the relevant teams only.</span>
+              Sign in with your Linear account to get started.<br />
+              <span style={{ fontSize: 12, display: "block", marginTop: 4 }}>Read-only access to your workspace projects.</span>
             </p>
-            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="lin_api_..." onKeyDown={(e) => e.key === "Enter" && apiKey && handleConnect()} style={inputStyle} />
-            {error && <p style={{ color: "#ef4444", fontSize: 13, marginTop: 8 }}>{error}</p>}
-            <button onClick={handleConnect} disabled={!apiKey || loading} style={{ ...buttonStyle, marginTop: 16, width: "100%" }}>
-              {loading ? "Connecting..." : "Connect"}
+            {error && <p style={{ color: "#ef4444", fontSize: 13, marginBottom: 16 }}>{error}</p>}
+            <button
+              onClick={() => { setError(null); startLogin(); }}
+              style={{ ...buttonStyle, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+            >
+              <svg width="16" height="16" viewBox="0 0 100 100" fill="none">
+                <path d="M1.22541 61.5228c-.97395-3.1498-.6726-6.5664.82382-9.3819l17.82677 17.8268c-2.8156 1.4964-6.2321 1.7977-9.38189.8238L1.22541 61.5228Z" fill="currentColor"/>
+                <path d="M3.03935 45.6498c.29957-.6032.63498-1.1903 1.0047-1.7577l49.8638 49.8637c-.5674.3698-1.1545.7052-1.7577 1.0048L3.03935 45.6498Z" fill="currentColor"/>
+                <path d="M7.71875 38.3755c.51463-.6698 1.07064-1.307 1.66479-1.9081l52.14936 52.1494c-.6012.5942-1.2384 1.1502-1.9082 1.6648L7.71875 38.3755Z" fill="currentColor"/>
+                <path d="M14.3344 32.1498c.5765-.5765 1.1812-1.1194 1.8108-1.6264l53.331 53.331c-.507.6296-1.0499 1.2344-1.6264 1.8108L14.3344 32.1498Z" fill="currentColor"/>
+                <path d="M22.0669 26.7382c.6647-.5095 1.3576-.9811 2.0751-1.4118l50.5321 50.5321c-.4307.7175-.9023 1.4104-1.4118 2.0751L22.0669 26.7382Z" fill="currentColor"/>
+                <path d="M31.0358 22.3528c.7702-.3626 1.5611-.6744 2.3687-.9339l44.177 44.1769c-.2595.8077-.5713 1.5986-.9339 2.3688L31.0358 22.3528Z" fill="currentColor"/>
+                <path d="M41.7183 19.6735c.8579-.1524 1.725-.2389 2.5963-.2579l36.2699 36.2699c-.019.8714-.1055 1.7384-.258 2.5963L41.7183 19.6735Z" fill="currentColor"/>
+                <path d="M54.0545 20.4375 79.5624 45.9454c-.6594 2.7717-2.1184 5.2884-4.2147 7.227L47.6279 25.4526c1.3523-1.4602 2.9964-2.6353 4.8128-3.4401 .5261-.2244 1.0631-.4188 1.6138-.5751Z" fill="currentColor"/>
+                <path d="M63.4891 22.2024 77.7977 36.511c-1.0986 2.3186-2.8345 4.2871-5.0152 5.6801L58.7073 28.1159c1.0399-.7622 1.9596-1.6826 2.7218-2.7225.6784-.9264 1.2288-1.9421 1.6356-3.0255l.4244-.1655Z" fill="currentColor"/>
+                <path d="M69.7925 25.6586 74.5088 30.375c-.3041.9476-.7466 1.8445-1.313 2.6624l-6.0663-6.0663c.8179-.5664 1.7148-1.0088 2.6624-1.313l.0006.0005Z" fill="currentColor"/>
+              </svg>
+              Sign in with Linear
             </button>
           </div>
         )}
@@ -571,7 +569,6 @@ export default function App() {
 }
 
 const centerCard: React.CSSProperties = { maxWidth: 420, width: "100%", margin: "auto", padding: 32, background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)" };
-const inputStyle: React.CSSProperties = { width: "100%", padding: "10px 12px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 14, outline: "none" };
 const headerInputStyle: React.CSSProperties = { padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 13, outline: "none" };
 const tabButtonStyle: React.CSSProperties = { padding: "8px 20px", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" };
 const stepperButtonStyle: React.CSSProperties = { padding: "4px 10px", border: "none", background: "var(--surface-hover)", color: "var(--text)", fontSize: 14, fontWeight: 600, cursor: "pointer", lineHeight: 1 };

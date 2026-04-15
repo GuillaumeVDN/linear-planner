@@ -1,3 +1,5 @@
+import { getAccessToken } from "./auth";
+
 const LINEAR_API = "https://api.linear.app/graphql";
 
 export interface LinearIssue {
@@ -49,12 +51,13 @@ export interface LinearCycle {
   endsAt: string;
 }
 
-async function gql<T>(apiKey: string, query: string, variables: Record<string, unknown> = {}): Promise<T> {
+async function gql<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
+  const token = await getAccessToken();
   const res = await fetch(LINEAR_API, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: apiKey,
+      Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ query, variables }),
   });
@@ -67,8 +70,8 @@ async function gql<T>(apiKey: string, query: string, variables: Record<string, u
   return json.data;
 }
 
-export async function fetchProjects(apiKey: string): Promise<LinearProject[]> {
-  const data = await gql<{ projects: { nodes: LinearProject[] } }>(apiKey, `
+export async function fetchProjects(): Promise<LinearProject[]> {
+  const data = await gql<{ projects: { nodes: LinearProject[] } }>(`
     query {
       projects(first: 100, orderBy: updatedAt) {
         nodes { id name }
@@ -78,11 +81,10 @@ export async function fetchProjects(apiKey: string): Promise<LinearProject[]> {
   return data.projects.nodes;
 }
 
-export async function fetchProjectMilestones(apiKey: string, projectId: string): Promise<LinearMilestone[]> {
+export async function fetchProjectMilestones(projectId: string): Promise<LinearMilestone[]> {
   const data = await gql<{
     project: { projectMilestones: { nodes: LinearMilestone[] } };
   }>(
-    apiKey,
     `
     query($projectId: String!) {
       project(id: $projectId) {
@@ -95,11 +97,10 @@ export async function fetchProjectMilestones(apiKey: string, projectId: string):
   return data.project.projectMilestones.nodes;
 }
 
-async function fetchTeamWorkflowStates(apiKey: string, teamId: string): Promise<LinearWorkflowState[]> {
+async function fetchTeamWorkflowStates(teamId: string): Promise<LinearWorkflowState[]> {
   const data = await gql<{
     team: { states: { nodes: LinearWorkflowState[] } };
   }>(
-    apiKey,
     `
     query($teamId: String!) {
       team(id: $teamId) {
@@ -112,11 +113,11 @@ async function fetchTeamWorkflowStates(apiKey: string, teamId: string): Promise<
   return data.team.states.nodes;
 }
 
-export async function fetchProjectWorkflowStates(apiKey: string, projectId: string): Promise<LinearWorkflowState[]> {
-  const teamIds = await fetchProjectTeamIds(apiKey, projectId);
+export async function fetchProjectWorkflowStates(projectId: string): Promise<LinearWorkflowState[]> {
+  const teamIds = await fetchProjectTeamIds(projectId);
   const allStates: LinearWorkflowState[] = [];
   for (const teamId of teamIds) {
-    allStates.push(...await fetchTeamWorkflowStates(apiKey, teamId));
+    allStates.push(...await fetchTeamWorkflowStates(teamId));
   }
   const seen = new Set<string>();
   return allStates
@@ -124,11 +125,10 @@ export async function fetchProjectWorkflowStates(apiKey: string, projectId: stri
     .sort((a, b) => a.position - b.position);
 }
 
-export async function fetchProjectTeamIds(apiKey: string, projectId: string): Promise<string[]> {
+export async function fetchProjectTeamIds(projectId: string): Promise<string[]> {
   const data = await gql<{
     project: { teams: { nodes: Array<{ id: string }> } };
   }>(
-    apiKey,
     `
     query($projectId: String!) {
       project(id: $projectId) {
@@ -141,7 +141,7 @@ export async function fetchProjectTeamIds(apiKey: string, projectId: string): Pr
   return data.project.teams.nodes.map((t) => t.id);
 }
 
-export async function fetchTeamCycles(apiKey: string, teamId: string): Promise<LinearCycle[]> {
+export async function fetchTeamCycles(teamId: string): Promise<LinearCycle[]> {
   const allCycles: LinearCycle[] = [];
   let hasMore = true;
   let cursor: string | undefined;
@@ -155,7 +155,6 @@ export async function fetchTeamCycles(apiKey: string, teamId: string): Promise<L
         };
       };
     }>(
-      apiKey,
       `
       query($teamId: String!, $after: String) {
         team(id: $teamId) {
@@ -183,11 +182,11 @@ export async function fetchTeamCycles(apiKey: string, teamId: string): Promise<L
   return allCycles;
 }
 
-export async function fetchProjectCycles(apiKey: string, projectId: string): Promise<LinearCycle[]> {
-  const teamIds = await fetchProjectTeamIds(apiKey, projectId);
+export async function fetchProjectCycles(projectId: string): Promise<LinearCycle[]> {
+  const teamIds = await fetchProjectTeamIds(projectId);
   const allCycles: LinearCycle[] = [];
   for (const teamId of teamIds) {
-    const cycles = await fetchTeamCycles(apiKey, teamId);
+    const cycles = await fetchTeamCycles(teamId);
     allCycles.push(...cycles);
   }
   // Deduplicate by id and sort by start date
@@ -201,7 +200,7 @@ export async function fetchProjectCycles(apiKey: string, projectId: string): Pro
     .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
 }
 
-export async function fetchProjectIssues(apiKey: string, projectId: string): Promise<LinearIssue[]> {
+export async function fetchProjectIssues(projectId: string): Promise<LinearIssue[]> {
   // Use small page size to stay under Linear's query complexity limit (10000)
   // Nested relations + cycle multiplies complexity per issue
   const allIssues: LinearIssue[] = [];
@@ -217,7 +216,6 @@ export async function fetchProjectIssues(apiKey: string, projectId: string): Pro
         };
       };
     }>(
-      apiKey,
       `
       query($projectId: String!, $after: String) {
         project(id: $projectId) {
@@ -263,10 +261,9 @@ export async function fetchProjectIssues(apiKey: string, projectId: string): Pro
 
 /**
  * Fetch the date each issue entered a specific workflow state, by querying issue history.
- * Returns a map of issueId → ISO date string.
+ * Returns a map of issueId -> ISO date string.
  */
 export async function fetchIssueEndDates(
-  apiKey: string,
   issueIds: string[],
   endStateName: string,
 ): Promise<Map<string, string>> {
@@ -284,7 +281,6 @@ export async function fetchIssueEndDates(
     batch.forEach((id, idx) => { variables[`id${idx}`] = id; });
 
     const data = await gql<Record<string, { id: string; history: { nodes: Array<{ createdAt: string; toState: { name: string } | null }> } }>>(
-      apiKey,
       `query(${params}) { ${aliases} }`,
       variables,
     );
