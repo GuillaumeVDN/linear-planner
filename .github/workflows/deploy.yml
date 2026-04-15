@@ -22,7 +22,7 @@ jobs:
         run: npm test
 
       - name: Build Docker image
-        run: docker build --build-arg VITE_LINEAR_CLIENT_ID=${{ secrets.VITE_LINEAR_CLIENT_ID }} -t linear-planner .
+        run: docker build --build-arg VITE_LINEAR_CLIENT_ID=${{ vars.VITE_LINEAR_CLIENT_ID }} -t linear-planner .
 
       - name: Stop existing container
         run: docker rm -f linear-planner || true
