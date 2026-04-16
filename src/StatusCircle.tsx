@@ -217,7 +217,7 @@ export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Dat
     soFarCount = `${doneIssues.length} issue${doneIssues.length !== 1 ? "s" : ""} · ${elapsed} / ~${fmtDays(doneEstimateTotal)} working days`;
     const fmtDiff = (d: number) => { const v = d / w; return v % 1 === 0 ? `${v}` : v.toFixed(1); };
     const diff = elapsed - estimatedPerWorker;
-    if (diff > 1) {
+    if (diff > 0) {
       soFarColor = "#f97316";
       soFarStatus = `${fmtDiff(diff * w)} days behind`;
     } else if (diff < 0) {
