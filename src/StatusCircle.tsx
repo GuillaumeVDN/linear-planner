@@ -165,11 +165,15 @@ export interface MilestoneSummaryData {
   soFarDays: string | null;
   soFarStatus: string | null;
   soFarColor: string | null;
+  ongoingLabel: string | null;
+  ongoingCount: string | null;
+  ongoingStatus: string | null;
+  ongoingColor: string | null;
 }
 
 export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Date, numWorkers: number = 1): MilestoneSummaryData {
   const count = msIssues.length;
-  const empty: MilestoneSummaryData = { issueCount: `${count} issue${count !== 1 ? "s" : ""}`, totalDays: null, startedAt: null, targetDays: "", targetEnd: "", soFarLabel: null, soFarCount: null, soFarDays: null, soFarStatus: null, soFarColor: null };
+  const empty: MilestoneSummaryData = { issueCount: `${count} issue${count !== 1 ? "s" : ""}`, totalDays: null, startedAt: null, targetDays: "", targetEnd: "", soFarLabel: null, soFarCount: null, soFarDays: null, soFarStatus: null, soFarColor: null, ongoingLabel: null, ongoingCount: null, ongoingStatus: null, ongoingColor: null };
   if (count === 0) return { ...empty, issueCount: "0 issues" };
 
   const estimatedIssues = msIssues.filter((i) => i.hasEstimate);
@@ -229,21 +233,47 @@ export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Dat
     }
   }
 
+  // Ongoing progress
+  const ongoingIssues = estimatedIssues.filter((i) => !i.done && i.daysSpent != null);
+  let ongoingLabel: string | null = null;
+  let ongoingCount: string | null = null;
+  let ongoingStatus: string | null = null;
+  let ongoingColor: string | null = null;
+
+  if (ongoingIssues.length > 0) {
+    const totalSpent = ongoingIssues.reduce((s, i) => s + (i.daysSpent ?? 0), 0);
+    const totalOngoingEstimate = ongoingIssues.reduce((s, i) => s + i.estimate, 0);
+    const allOngoingCount = msIssues.filter((i) => !i.done && i.daysSpent != null).length;
+    ongoingLabel = "Ongoing";
+    ongoingCount = `${allOngoingCount} issue${allOngoingCount !== 1 ? "s" : ""} · ${totalSpent} / ~${totalOngoingEstimate} working days`;
+    const diff = totalSpent - totalOngoingEstimate;
+    if (diff > 0) {
+      ongoingColor = "#f97316";
+      ongoingStatus = `${diff} day${diff !== 1 ? "s" : ""} behind`;
+    } else {
+      ongoingColor = "#15803d";
+      ongoingStatus = "On time";
+    }
+  }
+
   const totalDaysStr = `~${fmtDays(totalEstimate)} working days`;
 
   const allDoneCount = msIssues.filter((i) => i.done).length;
+  const allOngoingForUnstarted = msIssues.filter((i) => !i.done && i.daysSpent != null).length;
   const doneEstimate = estimatedIssues.filter((i) => i.done).reduce((s, i) => s + i.estimate, 0);
-  const remainingCount = count - allDoneCount;
-  const remaining = totalEstimate - doneEstimate;
-  const remainingStr = remaining > 0 ? `${remainingCount} issue${remainingCount !== 1 ? "s" : ""} · ~${fmtDays(remaining)} working days` : "";
+  const ongoingEstimate = ongoingIssues.reduce((s, i) => s + i.estimate, 0);
+  const unstartedCount = count - allDoneCount - allOngoingForUnstarted;
+  const unstartedEstimate = totalEstimate - doneEstimate - ongoingEstimate;
+  const unstartedStr = unstartedEstimate > 0 ? `${unstartedCount} issue${unstartedCount !== 1 ? "s" : ""} · ~${fmtDays(unstartedEstimate)} working days` : "";
 
   return {
     issueCount: `${count} issues`,
     totalDays: totalDaysStr,
     startedAt,
-    targetDays: remainingStr,
+    targetDays: unstartedStr,
     targetEnd: `End: ${endStr}`,
     soFarLabel, soFarCount, soFarDays, soFarStatus, soFarColor,
+    ongoingLabel, ongoingCount, ongoingStatus, ongoingColor,
   };
 }
 
@@ -268,10 +298,18 @@ export function MilestoneHeader({ name, summary }: { name: string; summary: Mile
           <span style={{ ...indentLineStyle, color: summary.soFarColor ?? "var(--text-muted)", fontWeight: 600 }}>{summary.soFarStatus}</span>
         </>
       )}
+      {summary.ongoingLabel && (
+        <>
+          <div style={spacerStyle} />
+          <span style={boldLineStyle}>{summary.ongoingLabel}</span>
+          <span style={indentLineStyle}>{summary.ongoingCount}</span>
+          <span style={{ ...indentLineStyle, color: summary.ongoingColor ?? "var(--text-muted)", fontWeight: 600 }}>{summary.ongoingStatus}</span>
+        </>
+      )}
       {summary.targetEnd && (
         <>
           <div style={spacerStyle} />
-          <span style={boldLineStyle}>Remaining</span>
+          <span style={boldLineStyle}>Unstarted</span>
           {summary.targetDays && <span style={indentLineStyle}>{summary.targetDays}</span>}
           <span style={indentLineStyle}>{summary.targetEnd}</span>
         </>
