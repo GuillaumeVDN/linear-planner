@@ -206,12 +206,19 @@ export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Dat
   if (startedIssues.length > 0) {
     const doneIssues = estimatedIssues.filter((i) => i.done);
     const earliestStartDay = Math.min(...startedIssues.map((i) => i.startDay));
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    // Count working days from earliest start to today
+    // Upper bound: end of last completed issue (so elapsed reflects time spent on
+    // completed work), falling back to today when nothing is done yet.
+    let endBoundDate: Date;
+    if (doneIssues.length > 0) {
+      const latestDoneEndDay = Math.max(...doneIssues.map((i) => i.endDay));
+      endBoundDate = dayToDate(startDate, latestDoneEndDay - 1);
+    } else {
+      endBoundDate = new Date();
+      endBoundDate.setHours(0, 0, 0, 0);
+    }
     let elapsed = 0;
     const startDateCal = dayToDate(startDate, earliestStartDay);
-    for (let d = new Date(startDateCal); d <= today; d.setDate(d.getDate() + 1)) {
+    for (let d = new Date(startDateCal); d <= endBoundDate; d.setDate(d.getDate() + 1)) {
       if (!isNonWorkingDay(d)) elapsed++;
     }
     // Sum of original estimates for done issues (what was planned for the completed work)
