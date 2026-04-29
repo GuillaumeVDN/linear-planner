@@ -380,6 +380,10 @@ export function Legend({ issues, showOptions }: LegendProps) {
         <BlockedIcon size={12} />
         <span>Blocked</span>
       </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+        <div style={{ width: 24, height: 12, borderRadius: 2, background: "rgba(245, 158, 11, 0.1)", border: "1px solid var(--border)" }} />
+        <span>Late</span>
+      </div>
       {showOptions && (
         <>
           <div style={{ flex: 1 }} />
