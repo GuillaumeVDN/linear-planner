@@ -67,16 +67,18 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
         ranges.push([cycle.startDay, cycle.endDay]);
       }
     }
-    for (let i = 0; i < schedule.cycles.length - 1; i++) {
-      const gapStart = schedule.cycles[i].endDay;
-      const gapEnd = schedule.cycles[i + 1].startDay;
-      if (gapEnd <= gapStart) continue;
-      if (!schedule.issues.some((si) => si.startDay < gapEnd && si.endDay > gapStart)) {
-        ranges.push([gapStart, gapEnd]);
+    if (!showCooldown) {
+      for (let i = 0; i < schedule.cycles.length - 1; i++) {
+        const gapStart = schedule.cycles[i].endDay;
+        const gapEnd = schedule.cycles[i + 1].startDay;
+        if (gapEnd <= gapStart) continue;
+        if (!schedule.issues.some((si) => si.startDay < gapEnd && si.endDay > gapStart)) {
+          ranges.push([gapStart, gapEnd]);
+        }
       }
     }
     return ranges;
-  }, [schedule.cycles, schedule.issues]);
+  }, [schedule.cycles, schedule.issues, showCooldown]);
 
   function isInEmptyRange(day: number): boolean {
     return emptyRanges.some(([start, end]) => day >= start && day < end);
