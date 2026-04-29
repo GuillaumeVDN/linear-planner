@@ -430,7 +430,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                               height: ROW_HEIGHT - 4,
                               background: [
                                 isBlocked ? BLOCKED_STRIPE : null,
-                                !issue.hasEstimate ? NO_ESTIMATE_BG : "var(--surface-hover)",
+                                issue.isLate ? "rgba(245, 158, 11, 0.1)" : !issue.hasEstimate ? NO_ESTIMATE_BG : "var(--surface-hover)",
                               ].filter(Boolean).join(", "),
                               border: "1px solid var(--border)",
                               borderRadius: 4,
