@@ -403,6 +403,78 @@ describe("scheduleIssues", () => {
       const a = findIssue(result, "A-1")!;
       expect(a.daysSpent).toBeNull();
     });
+
+    it("late in-progress issues extend to today and are marked isLate", () => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const startDate = new Date(today);
+      startDate.setDate(startDate.getDate() - 14);
+      while (startDate.getDay() === 0 || startDate.getDay() === 6) {
+        startDate.setDate(startDate.getDate() - 1);
+      }
+      const pinnedStart = new Date(startDate);
+      pinnedStart.setDate(pinnedStart.getDate() + 1);
+      while (pinnedStart.getDay() === 0 || pinnedStart.getDay() === 6) {
+        pinnedStart.setDate(pinnedStart.getDate() + 1);
+      }
+
+      const issues = [
+        makeIssue({
+          id: "a", identifier: "A-1", estimate: 1,
+          startedAt: isoDate(pinnedStart),
+          state: { name: "In Progress", type: "started", color: "#36f", position: 2 },
+        }),
+      ];
+      const result = scheduleIssues(issues, 1, startDate, [], [], WORKFLOW_STATES);
+      const a = findIssue(result, "A-1")!;
+      const todayOffset = Math.round((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+      expect(a.isLate).toBe(true);
+      expect(a.endDay).toBeGreaterThanOrEqual(todayOffset + 1);
+    });
+
+    it("in-progress issues within estimate are not marked late", () => {
+      const issues = [
+        makeIssue({
+          id: "a", identifier: "A-1", estimate: 999,
+          startedAt: isoDate(MONDAY),
+          state: { name: "In Progress", type: "started", color: "#36f", position: 2 },
+        }),
+      ];
+      const result = scheduleIssues(issues, 1, MONDAY, [], [], WORKFLOW_STATES);
+      const a = findIssue(result, "A-1")!;
+      expect(a.isLate).toBe(false);
+    });
+
+    it("late in-progress issue does not overlap with the next issue on the same worker", () => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const startDate = new Date(today);
+      startDate.setDate(startDate.getDate() - 14);
+      while (startDate.getDay() === 0 || startDate.getDay() === 6) {
+        startDate.setDate(startDate.getDate() - 1);
+      }
+      const pinnedStart = new Date(startDate);
+      pinnedStart.setDate(pinnedStart.getDate() + 1);
+      while (pinnedStart.getDay() === 0 || pinnedStart.getDay() === 6) {
+        pinnedStart.setDate(pinnedStart.getDate() + 1);
+      }
+
+      // A: pinned, est=1, started 2 weeks ago (late)
+      // B: unstarted, will be scheduled on same worker after A
+      const issues = [
+        makeIssue({
+          id: "a", identifier: "A-1", estimate: 1,
+          startedAt: isoDate(pinnedStart),
+          state: { name: "In Progress", type: "started", color: "#36f", position: 2 },
+        }),
+        makeIssue({ id: "b", identifier: "A-2", estimate: 2 }),
+      ];
+      const result = scheduleIssues(issues, 1, startDate, [], [], WORKFLOW_STATES);
+      const a = findIssue(result, "A-1")!;
+      const b = findIssue(result, "A-2")!;
+      expect(a.isLate).toBe(true);
+      expect(b.startDay).toBeGreaterThanOrEqual(a.endDay);
+    });
   });
 
   describe("unstarted issues and today floor", () => {
@@ -589,6 +661,50 @@ describe("scheduleIssues", () => {
       const d = findIssue(result, "A-4")!;
       // A should come before D (or at least not after)
       expect(a.startDay).toBeLessThanOrEqual(d.startDay);
+    });
+  });
+
+  describe("worker advance with unstarted issues", () => {
+    it("does not skip over unstarted issues when advancing a worker freed before today", () => {
+      // Regression: when a pinned issue frees a worker before todaySi, the advance
+      // logic must account for the todaySi floor on unstarted issues. Otherwise it
+      // jumps the worker far into the future, leaving a gap on that row.
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const startDate = new Date(today);
+      startDate.setDate(startDate.getDate() - 14);
+      // Ensure startDate is a weekday
+      while (startDate.getDay() === 0 || startDate.getDay() === 6) {
+        startDate.setDate(startDate.getDate() - 1);
+      }
+
+      const pinnedStart = new Date(startDate);
+      pinnedStart.setDate(pinnedStart.getDate() + 1);
+      while (pinnedStart.getDay() === 0 || pinnedStart.getDay() === 6) {
+        pinnedStart.setDate(pinnedStart.getDate() + 1);
+      }
+
+      // A: pinned in-progress issue (est=1, frees worker well before today)
+      // B: unstarted, unblocked (should start near today on that same worker)
+      const issues = [
+        makeIssue({
+          id: "a", identifier: "T-1", estimate: 1,
+          startedAt: isoDate(pinnedStart),
+          state: { name: "In Progress", type: "started", color: "#36f", position: 2 },
+        }),
+        makeIssue({ id: "b", identifier: "T-2", estimate: 2 }),
+      ];
+      const result = scheduleIssues(issues, 1, startDate, [], [], WORKFLOW_STATES);
+      const a = findIssue(result, "T-1")!;
+      const b = findIssue(result, "T-2")!;
+
+      const todayOffset = Math.round((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+      // B should start near today (within a few days for weekends/holidays),
+      // NOT hundreds of days later from a broken advance.
+      // Note: a.endDay may be extended to today due to late-issue display,
+      // so we check against the original estimated end instead.
+      expect(b.startDay).toBeGreaterThanOrEqual(a.startDay + 1);
+      expect(b.startDay).toBeLessThanOrEqual(todayOffset + 4);
     });
   });
 

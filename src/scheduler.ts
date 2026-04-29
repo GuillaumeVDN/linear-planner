@@ -22,6 +22,7 @@ export interface ScheduledIssue {
   daysSpent: number | null; // working days from startedAt to today (started/done), null if not started
   hasEstimate: boolean;
   done: boolean;
+  isLate: boolean; // in-progress and has taken more working days than estimated
   blockedBy: Array<{ identifier: string; title: string; done: boolean }>;
 }
 
@@ -404,16 +405,21 @@ export function scheduleIssues(
         daysSpent = Math.max(1, todayWd - startedWd + 1);
       }
     }
+    const isLate = !isDone(issue) && issue.startedAt != null && daysSpent != null && hasEstimate && daysSpent > estimate;
+    let endDay = cal.toCalendar(sched.toWorkingDay(endSi - 1)) + 1;
+    if (isLate) {
+      endDay = Math.max(endDay, dateToCalendarOffset(today, startDate) + 1);
+    }
     return {
       id: issue.id, identifier: issue.identifier, title: issue.title, url: issue.url,
       duration, estimate,
       startDay: cal.toCalendar(sched.toWorkingDay(startSi)),
-      endDay: cal.toCalendar(sched.toWorkingDay(endSi - 1)) + 1,
+      endDay,
       worker, milestone: issue.projectMilestone,
       stateName: issue.state.name, stateType: issue.state.type, stateColor: issue.state.color, stateProgress: getStateProgress(issue),
       priority: issue.priority, priorityLabel: issue.priorityLabel,
       assigneeAvatarUrl: issue.assignee?.avatarUrl ?? null, assigneeName: issue.assignee?.name ?? null,
-      daysSpent, hasEstimate, done: isDone(issue),
+      daysSpent, hasEstimate, done: isDone(issue), isLate,
       blockedBy: Array.from(allBlockedBy.get(issue.id) ?? [])
         .map((id) => { const b = issueMap.get(id); return b ? { identifier: b.identifier, title: b.title, done: isDone(b) } : null; })
         .filter((x): x is { identifier: string; title: string; done: boolean } => !!x),
@@ -480,8 +486,10 @@ export function scheduleIssues(
 
       const startSi = bestStartSi;
       const endSi = startSi + est;
-      workerFreeAtSi[bestWorker] = endSi;
-      endSiMap.set(issue.id, endSi);
+      const isLate = hasEstimate && todaySi >= endSi;
+      const effectiveEndSi = isLate ? todaySi + 1 : endSi;
+      workerFreeAtSi[bestWorker] = effectiveEndSi;
+      endSiMap.set(issue.id, effectiveEndSi);
       scheduledIds.add(issue.id);
       pinnedRemaining.delete(issueId);
       progress = true;
@@ -630,6 +638,10 @@ export function scheduleIssues(
             let earliest = milestoneBarrier;
             for (const bid of blockedBy.get(id) ?? []) {
               earliest = Math.max(earliest, endSiMap.get(bid) ?? Infinity);
+            }
+            const issue = issueMap.get(id);
+            if (issue && (issue.state.type === "unstarted" || issue.state.type === "backlog" || issue.state.type === "triage")) {
+              earliest = Math.max(earliest, todaySi);
             }
             return earliest;
           }).filter((t) => t > bestUsedFree),
