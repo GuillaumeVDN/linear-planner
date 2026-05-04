@@ -1,6 +1,6 @@
 import { type CSSProperties, useMemo } from "react";
 import type { ScheduledIssue } from "./scheduler";
-import { dayToDate, formatDate, isNonWorkingDay } from "./scheduler";
+import { dayToDate, formatDate } from "./scheduler";
 
 export const BLOCKED_STRIPE =
   "repeating-linear-gradient(-45deg, transparent 0px, transparent 5px, rgba(150,150,150,0.15) 5px, rgba(150,150,150,0.15) 10px)";
@@ -205,35 +205,21 @@ export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Dat
 
   if (startedIssues.length > 0) {
     const doneIssues = estimatedIssues.filter((i) => i.done);
-    const earliestStartDay = Math.min(...startedIssues.map((i) => i.startDay));
-    // Upper bound: end of last completed issue (so elapsed reflects time spent on
-    // completed work), falling back to today when nothing is done yet.
-    let endBoundDate: Date;
-    if (doneIssues.length > 0) {
-      const latestDoneEndDay = Math.max(...doneIssues.map((i) => i.endDay));
-      endBoundDate = dayToDate(startDate, latestDoneEndDay - 1);
-    } else {
-      endBoundDate = new Date();
-      endBoundDate.setHours(0, 0, 0, 0);
-    }
-    let elapsed = 0;
-    const startDateCal = dayToDate(startDate, earliestStartDay);
-    for (let d = new Date(startDateCal); d <= endBoundDate; d.setDate(d.getDate() + 1)) {
-      if (!isNonWorkingDay(d)) elapsed++;
-    }
-    // Sum of original estimates for done issues (what was planned for the completed work)
     const doneEstimateTotal = doneIssues.reduce((s, i) => s + i.estimate, 0);
+    const totalDaysSpent = doneIssues.reduce((s, i) => s + (i.daysSpent ?? 0), 0);
     const estimatedPerWorker = doneEstimateTotal / w;
+    const spentPerWorker = totalDaysSpent / w;
+    const fmtSpent = spentPerWorker % 1 === 0 ? `${spentPerWorker}` : spentPerWorker.toFixed(1);
     soFarLabel = "Completed";
-    soFarCount = `${doneIssues.length} issue${doneIssues.length !== 1 ? "s" : ""} · ${elapsed} / ~${fmtDays(doneEstimateTotal)} working days`;
-    const fmtDiff = (d: number) => { const v = d / w; return v % 1 === 0 ? `${v}` : v.toFixed(1); };
-    const diff = elapsed - estimatedPerWorker;
+    soFarCount = `${doneIssues.length} issue${doneIssues.length !== 1 ? "s" : ""} · ${fmtSpent} / ~${fmtDays(doneEstimateTotal)} working days`;
+    const diff = spentPerWorker - estimatedPerWorker;
+    const fmtAbsDiff = Math.abs(diff) % 1 === 0 ? `${Math.abs(diff)}` : Math.abs(diff).toFixed(1);
     if (diff > 0) {
       soFarColor = "#f97316";
-      soFarStatus = `${fmtDiff(diff * w)} days behind`;
+      soFarStatus = `${fmtAbsDiff} days behind`;
     } else if (diff < 0) {
       soFarColor = "#22c55e";
-      soFarStatus = `${fmtDiff(Math.abs(diff) * w)} days ahead`;
+      soFarStatus = `${fmtAbsDiff} days ahead`;
     } else {
       soFarColor = "#15803d";
       soFarStatus = "On time";
