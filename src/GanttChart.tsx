@@ -356,7 +356,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                       color: h.isGrayed || isPast ? "var(--text-muted)" : "var(--text)",
                       opacity: h.isGrayed ? 0.5 : isPast ? 0.6 : 1,
                       borderLeft: h.col === todayCol ? "2px solid #ef4444" : (h.col > 0 && (h.isCycleStart || h.isCycleEnd)) ? "2px solid var(--border)" : h.isMonday ? "1px solid var(--border)" : "none",
-                      background: isPast ? "rgba(128,128,128,0.08)" : undefined,
+                      background: h.col === todayCol ? "rgba(128,128,128,0.06)" : isPast ? "rgba(128,128,128,0.08)" : undefined,
                     }}
                   >
                     <span>{h.date.toLocaleDateString("en-US", { weekday: "short" })}</span>
@@ -391,6 +391,10 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               {/* Past overlay */}
               {todayCol > 0 && (
                 <div style={{ position: "absolute", left: 0, top: 0, width: todayCol * DAY_WIDTH, height: "100%", background: "rgba(128,128,128,0.15)", pointerEvents: "none", zIndex: 1 }} />
+              )}
+              {/* Today highlight */}
+              {todayCol >= 0 && (
+                <div style={{ position: "absolute", left: todayCol * DAY_WIDTH, top: 0, width: DAY_WIDTH, height: "100%", background: "rgba(128,128,128,0.05)", pointerEvents: "none", zIndex: 1 }} />
               )}
 
               {/* Milestone groups */}
