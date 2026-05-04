@@ -3,6 +3,11 @@ import type { ScheduleResult, ScheduledIssue, CyclePeriod } from "./scheduler";
 import { dayToDate, formatDate, isBankHoliday } from "./scheduler";
 import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, MilestoneHeader, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, type MilestoneSummaryData } from "./StatusCircle";
 
+function formatParisTimeOfDay(isoString: string): string {
+  const h = parseInt(new Date(isoString).toLocaleString("en-US", { timeZone: "Europe/Paris", hour: "numeric", hour12: false }), 10);
+  return h < 13 ? "morning" : "afternoon";
+}
+
 const ROW_HEIGHT = 36;
 const ROW_GAP = 4;
 const CYCLE_ROW_HEIGHT = 22;
@@ -499,8 +504,9 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               <span>{tooltipInfo.issue.stateName}</span>
               <span>&middot;</span>
               <DurationBadge issue={tooltipInfo.issue} />
-              <span>&middot;</span>
-              <span>{tooltipInfo.issue.daysSpent === null ? "~" : ""}{formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.startDay))}</span><span style={{ position: "relative", top: -2 }}>→</span><span>{!tooltipInfo.issue.done ? "~" : ""}{formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.endDay - 1))}</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+              <span>{tooltipInfo.issue.daysSpent === null ? "~" : ""}{formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.startDay))}{tooltipInfo.issue.startedAtRaw ? `, ${formatParisTimeOfDay(tooltipInfo.issue.startedAtRaw)}` : ""}</span><span style={{ position: "relative", top: -2 }}>→</span><span>{!tooltipInfo.issue.done ? "~" : ""}{formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.endDay - 1))}{tooltipInfo.issue.endedAtRaw ? `, ${formatParisTimeOfDay(tooltipInfo.issue.endedAtRaw)}` : ""}</span>
             </div>
             {!tooltipInfo.issue.done && tooltipInfo.issue.blockedBy.filter((b) => !b.done).length > 0 && (
               <div style={{ color: "var(--text-muted)", marginTop: 4, fontSize: 11 }}>

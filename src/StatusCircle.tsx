@@ -238,7 +238,8 @@ export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Dat
     const totalOngoingEstimate = ongoingIssues.reduce((s, i) => s + i.estimate, 0);
     const allOngoingCount = msIssues.filter((i) => !i.done && i.daysSpent != null).length;
     ongoingLabel = "Ongoing";
-    ongoingCount = `${allOngoingCount} issue${allOngoingCount !== 1 ? "s" : ""} · ${totalSpent} / ~${totalOngoingEstimate} working days`;
+    const fmtSpentOngoing = totalSpent % 1 === 0 ? `${totalSpent}` : totalSpent.toFixed(1);
+    ongoingCount = `${allOngoingCount} issue${allOngoingCount !== 1 ? "s" : ""} · ${fmtSpentOngoing} / ~${totalOngoingEstimate} working days`;
     const diff = totalSpent - totalOngoingEstimate;
     if (diff > 0) {
       ongoingColor = "#f97316";

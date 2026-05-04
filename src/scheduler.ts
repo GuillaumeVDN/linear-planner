@@ -24,6 +24,8 @@ export interface ScheduledIssue {
   done: boolean;
   isLate: boolean; // in-progress and has taken more working days than estimated
   blockedBy: Array<{ identifier: string; title: string; done: boolean }>;
+  startedAtRaw: string | null;
+  endedAtRaw: string | null;
 }
 
 export interface CyclePeriod {
@@ -223,6 +225,25 @@ function dateToCalendarOffset(date: Date, startDate: Date): number {
   return Math.round((date.getTime() - startDate.getTime()) / MS_PER_DAY);
 }
 
+export function getParisHourMinute(isoString: string): { hour: number; minute: number } {
+  const d = new Date(isoString);
+  const hour = parseInt(d.toLocaleString("en-US", { timeZone: "Europe/Paris", hour: "numeric", hour12: false }), 10);
+  const minute = parseInt(d.toLocaleString("en-US", { timeZone: "Europe/Paris", minute: "numeric" }), 10);
+  return { hour, minute };
+}
+
+function isAfterThreshold(isoString: string): boolean {
+  const { hour, minute } = getParisHourMinute(isoString);
+  return hour > 13 || (hour === 13 && minute >= 30);
+}
+
+export function halfDayAdjustment(startedAt: string | null, endedAt: string | null): number {
+  let adj = 0;
+  if (startedAt && isAfterThreshold(startedAt)) adj -= 0.5;
+  if (endedAt && !isAfterThreshold(endedAt)) adj -= 0.5;
+  return adj;
+}
+
 /**
  * Build a schedulable-day calendar that skips cooldown periods.
  *
@@ -388,6 +409,7 @@ export function scheduleIssues(
   // --- Scheduling state (non-done issues only) ---
   const scheduled: ScheduledIssue[] = [];
   const endSiMap = new Map<string, number>();
+  const doneEndDateStr = new Map<string, string | null>();
   const scheduledIds = new Set<string>();
 
   function buildScheduledIssue(issue: LinearIssue, duration: number, estimate: number, startSi: number, endSi: number, worker: number): ScheduledIssue {
@@ -395,14 +417,12 @@ export function scheduleIssues(
     let daysSpent: number | null = null;
     if (issue.startedAt) {
       if (isDone(issue)) {
-        // Done issues: actual working days = their computed duration
-        daysSpent = duration;
+        daysSpent = Math.max(0.5, duration + halfDayAdjustment(issue.startedAt, doneEndDateStr.get(issue.id) ?? null));
       } else {
-        // In-progress issues: working days from startedAt to today
         const startedDate = new Date(issue.startedAt);
         startedDate.setHours(0, 0, 0, 0);
         const startedWd = cal.toWorkingDay(dateToCalendarOffset(startedDate, startDate));
-        daysSpent = Math.max(1, todayWd - startedWd + 1);
+        daysSpent = Math.max(0.5, todayWd - startedWd + 1 + halfDayAdjustment(issue.startedAt, null));
       }
     }
     const isLate = !isDone(issue) && issue.startedAt != null && daysSpent != null && hasEstimate && daysSpent > estimate;
@@ -420,6 +440,7 @@ export function scheduleIssues(
       priority: issue.priority, priorityLabel: issue.priorityLabel,
       assigneeAvatarUrl: issue.assignee?.avatarUrl ?? null, assigneeName: issue.assignee?.name ?? null,
       daysSpent, hasEstimate, done: isDone(issue), isLate,
+      startedAtRaw: issue.startedAt, endedAtRaw: isDone(issue) ? (doneEndDateStr.get(issue.id) ?? null) : null,
       blockedBy: Array.from(allBlockedBy.get(issue.id) ?? [])
         .map((id) => { const b = issueMap.get(id); return b ? { identifier: b.identifier, title: b.title, done: isDone(b) } : null; })
         .filter((x): x is { identifier: string; title: string; done: boolean } => !!x),
@@ -435,6 +456,7 @@ export function scheduleIssues(
     const startWd = cal.toWorkingDay(dateToCalendarOffset(d, startDate));
     const startSi = sched.toSchedulable(startWd);
     const endDateStr = doneEndDates.get(issue.id) ?? issue.completedAt;
+    doneEndDateStr.set(issue.id, endDateStr);
     const hasEst = issue.estimate != null && issue.estimate > 0;
     const baseDur = hasEst ? issue.estimate! : DEFAULT_ESTIMATE;
     let endSi: number;
