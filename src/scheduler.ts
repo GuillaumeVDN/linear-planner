@@ -263,6 +263,7 @@ function buildSchedulableDays(
     return {
       toWorkingDay(si: number) { return si; },
       toSchedulable(wdIndex: number) { return wdIndex; },
+      countSchedulable(startWd: number, endWd: number) { return endWd < startWd ? 0 : endWd - startWd + 1; },
     };
   }
 
@@ -332,6 +333,20 @@ function buildSchedulableDays(
       }
       // Past precomputed range
       return schedulable.length + (wd - (schedulable.length > 0 ? schedulable[schedulable.length - 1] + 1 : 0));
+    },
+    /** Count schedulable days in the inclusive working-day range [startWd, endWd]. Cooldown days are excluded. */
+    countSchedulable(startWd: number, endWd: number): number {
+      if (endWd < startWd) return 0;
+      let count = 0;
+      for (let wd = startWd; wd <= endWd; wd++) {
+        if (wd >= 0 && wd < wdToSchedulable.length) {
+          if (wdToSchedulable[wd] >= 0) count++;
+        } else if (wd >= wdToSchedulable.length) {
+          // Past last known cycle — treat as schedulable
+          count++;
+        }
+      }
+      return count;
     },
   };
 }
@@ -419,10 +434,11 @@ export function scheduleIssues(
       if (isDone(issue)) {
         daysSpent = Math.max(0.5, duration + halfDayAdjustment(issue.startedAt, doneEndDateStr.get(issue.id) ?? null));
       } else {
+        // In-progress issues: schedulable days from startedAt to today (excludes weekends, holidays, cooldown)
         const startedDate = new Date(issue.startedAt);
         startedDate.setHours(0, 0, 0, 0);
         const startedWd = cal.toWorkingDay(dateToCalendarOffset(startedDate, startDate));
-        daysSpent = Math.max(0.5, todayWd - startedWd + 1 + halfDayAdjustment(issue.startedAt, null));
+        daysSpent = Math.max(0.5, sched.countSchedulable(startedWd, todayWd) + halfDayAdjustment(issue.startedAt, null));
       }
     }
     const isLate = !isDone(issue) && issue.startedAt != null && daysSpent != null && hasEstimate && daysSpent > estimate;
@@ -463,9 +479,10 @@ export function scheduleIssues(
     if (endDateStr) {
       const endDate = new Date(endDateStr);
       endDate.setHours(0, 0, 0, 0);
-      endSi = startSi + Math.max(1, cal.toWorkingDay(dateToCalendarOffset(endDate, startDate)) - startWd + 1);
+      const endWd = cal.toWorkingDay(dateToCalendarOffset(endDate, startDate));
+      endSi = startSi + Math.max(1, sched.countSchedulable(startWd, endWd));
     } else {
-      endSi = startSi + Math.max(1, Math.min(baseDur, todayWd - startWd + 1));
+      endSi = startSi + Math.max(1, Math.min(baseDur, sched.countSchedulable(startWd, todayWd)));
     }
     endSiMap.set(issue.id, endSi);
   }
