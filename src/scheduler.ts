@@ -720,7 +720,9 @@ export function scheduleIssues(
     doneItems.push(buildScheduledIssue(issue, endSi - startSi, est, startSi, endSi, -1));
   }
 
-  // Pack done issues into display lanes by overlap
+  // Pack done issues into display lanes by overlap.
+  // Sort by startDay (tiebreak endDay) so first-fit is optimal — minimizes lanes.
+  doneItems.sort((a, b) => a.startDay - b.startDay || a.endDay - b.endDay);
   const doneLaneIntervals: Array<Array<[number, number]>> = [];
   for (const di of doneItems) {
     let lane = doneLaneIntervals.findIndex((intervals) => !intervals.some(([s, e]) => di.startDay < e && di.endDay > s));
