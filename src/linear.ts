@@ -15,7 +15,7 @@ export interface LinearIssue {
   state: { name: string; type: string; color: string; position: number };
   assignee: { id: string; name: string; avatarUrl: string | null } | null;
   projectMilestone: { id: string; name: string; sortOrder: number } | null;
-  labels: { nodes: Array<{ name: string }> };
+  labels: { nodes: Array<{ name: string; color: string }> };
   relations: {
     nodes: Array<{
       type: string;
@@ -233,7 +233,7 @@ export async function fetchProjectIssues(projectId: string): Promise<LinearIssue
               assignee { id name avatarUrl }
               state { name type color position }
               projectMilestone { id name sortOrder }
-              labels { nodes { name } }
+              labels { nodes { name color } }
               relations {
                 nodes {
                   type

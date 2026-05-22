@@ -26,6 +26,7 @@ export interface ScheduledIssue {
   blockedBy: Array<{ identifier: string; title: string; done: boolean }>;
   startedAtRaw: string | null;
   endedAtRaw: string | null;
+  labels: Array<{ name: string; color: string }>;
 }
 
 export interface CyclePeriod {
@@ -457,6 +458,7 @@ export function scheduleIssues(
       assigneeAvatarUrl: issue.assignee?.avatarUrl ?? null, assigneeName: issue.assignee?.name ?? null,
       daysSpent, hasEstimate, done: isDone(issue), isLate,
       startedAtRaw: issue.startedAt, endedAtRaw: isDone(issue) ? (doneEndDateStr.get(issue.id) ?? null) : null,
+      labels: issue.labels.nodes,
       blockedBy: Array.from(allBlockedBy.get(issue.id) ?? [])
         .map((id) => { const b = issueMap.get(id); return b ? { identifier: b.identifier, title: b.title, done: isDone(b) } : null; })
         .filter((x): x is { identifier: string; title: string; done: boolean } => !!x),

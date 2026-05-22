@@ -4,7 +4,7 @@ import { dayToDate, formatDate } from "./scheduler";
 import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, MilestoneHeader, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, type MilestoneSummaryData } from "./StatusCircle";
 
 const NODE_WIDTH = 240;
-const NODE_HEIGHT = 72;
+const NODE_HEIGHT = 88;
 const H_GAP = 24;
 const V_GAP = 50;
 const PADDING = 40;
@@ -371,13 +371,23 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
                             fontWeight: 500,
                             lineHeight: 1.3,
                             display: "-webkit-box",
-                            WebkitLineClamp: 2,
+                            WebkitLineClamp: node.issue.labels.length > 0 ? 1 : 2,
                             WebkitBoxOrient: "vertical",
                             overflow: "hidden",
                           }}
                         >
                           {node.issue.title}
                         </div>
+                        {node.issue.labels.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 3, overflow: "hidden", maxHeight: 18 }}>
+                            {node.issue.labels.map((l) => (
+                              <span key={l.name} style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 9, padding: "0 4px", borderRadius: 3, background: `${l.color}20`, color: l.color, fontWeight: 500, whiteSpace: "nowrap", lineHeight: "16px" }}>
+                                <span style={{ width: 5, height: 5, borderRadius: "50%", background: l.color, flexShrink: 0 }} />
+                                {l.name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

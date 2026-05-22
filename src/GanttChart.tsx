@@ -491,9 +491,19 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
             }}
           >
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>
               {tooltipInfo.issue.identifier}: {tooltipInfo.issue.title}
             </div>
+            {tooltipInfo.issue.labels.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 }}>
+                {tooltipInfo.issue.labels.map((l) => (
+                  <span key={l.name} style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, padding: "1px 6px", borderRadius: 3, background: `${l.color}20`, color: l.color, fontWeight: 500 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: l.color, flexShrink: 0 }} />
+                    {l.name}
+                  </span>
+                ))}
+              </div>
+            )}
             <div style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)" }}>
               {tooltipInfo.issue.assigneeName && <><AssigneeAvatar url={tooltipInfo.issue.assigneeAvatarUrl} name={tooltipInfo.issue.assigneeName} size={14} /><span>{tooltipInfo.issue.assigneeName}</span></>}
               {tooltipInfo.issue.assigneeName && tooltipInfo.issue.priority > 0 && <span>&middot;</span>}
