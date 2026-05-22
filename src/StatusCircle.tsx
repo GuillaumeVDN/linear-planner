@@ -6,6 +6,39 @@ export const BLOCKED_STRIPE =
   "repeating-linear-gradient(-45deg, transparent 0px, transparent 5px, rgba(150,150,150,0.15) 5px, rgba(150,150,150,0.15) 10px)";
 export const NO_ESTIMATE_BG =
   "repeating-linear-gradient(-45deg, transparent, transparent 5px, rgba(234,145,50,0.13) 5px, rgba(234,145,50,0.13) 10px)";
+export const DONE_STRIPE =
+  "repeating-linear-gradient(-45deg, transparent 0px, transparent 5px, rgba(74,222,128,0.18) 5px, rgba(74,222,128,0.18) 10px)";
+
+/** Convert hex color (#rgb or #rrggbb) to rgba with the given alpha. Returns fallback if parse fails. */
+export function hexToRgba(hex: string, alpha: number, fallback = "var(--surface-hover)"): string {
+  if (!hex || hex[0] !== "#") return fallback;
+  let h = hex.slice(1);
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  if (h.length !== 6) return fallback;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return fallback;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/** Background tint for a ScheduledIssue's current status — ongoing only. Returns null otherwise. */
+export function ongoingStatusBg(stateType: string, done: boolean, stateColor: string): string | null {
+  if (done) return null;
+  if (stateType !== "started") return null;
+  return hexToRgba(stateColor, 0.15);
+}
+
+/**
+ * Whether an issue should be displayed as blocked (lock icon + striped background).
+ * Ongoing issues (started, not done) are NOT shown as blocked even if they have undone blockers —
+ * work has visibly begun anyway.
+ */
+export function isBlockedDisplay(issue: Pick<ScheduledIssue, "stateType" | "done" | "blockedBy">): boolean {
+  if (issue.done) return false;
+  if (issue.stateType === "started") return false;
+  return issue.blockedBy.some((b) => !b.done);
+}
 
 /** Pie arc path from 12 o'clock sweeping clockwise by `progress` (0-1) */
 function pieArc(cx: number, cy: number, r: number, progress: number): string {
@@ -368,8 +401,8 @@ export function Legend({ issues, showOptions }: LegendProps) {
         <span>Blocked</span>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-        <div style={{ width: 24, height: 12, borderRadius: 2, background: "rgba(245, 158, 11, 0.1)", border: "1px solid var(--border)" }} />
-        <span>Late</span>
+        <div style={{ width: 24, height: 12, borderRadius: 2, background: `${DONE_STRIPE}, var(--surface-hover)`, border: "1px solid var(--border)" }} />
+        <span>Done</span>
       </div>
       {showOptions && (
         <>

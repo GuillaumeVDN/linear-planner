@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import type { ScheduleResult, ScheduledIssue, MilestoneInfo } from "./scheduler";
 import { dayToDate, formatDate } from "./scheduler";
-import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, MilestoneHeader, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, type MilestoneSummaryData } from "./StatusCircle";
+import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, MilestoneHeader, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, DONE_STRIPE, ongoingStatusBg, isBlockedDisplay, type MilestoneSummaryData } from "./StatusCircle";
 import ELK from "elkjs/lib/elk.bundled.js";
 import type { ElkNode, ElkExtendedEdge } from "elkjs/lib/elk-api";
 
@@ -354,7 +354,7 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
 
                   {/* Node cards */}
                   {section.nodes.map((node) => {
-                    const isBlocked = node.issue.blockedBy.some((b) => !b.done);
+                    const isBlocked = isBlockedDisplay(node.issue);
                     return (
                       <div
                         key={node.issue.id}
@@ -373,7 +373,8 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
                           height: NODE_HEIGHT,
                           background: [
                             isBlocked ? BLOCKED_STRIPE : null,
-                            !node.issue.hasEstimate ? NO_ESTIMATE_BG : "var(--surface-hover)",
+                            node.issue.done ? DONE_STRIPE : null,
+                            ongoingStatusBg(node.issue.stateType, node.issue.done, node.issue.stateColor) ?? (!node.issue.hasEstimate ? NO_ESTIMATE_BG : "var(--surface-hover)"),
                           ].filter(Boolean).join(", "),
                           border: "1px solid var(--border)",
                           borderRadius: 6,

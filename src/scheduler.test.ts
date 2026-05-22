@@ -363,6 +363,74 @@ describe("scheduleIssues", () => {
       expect(b.done).toBe(true);
       expect(a.worker).toBe(b.worker);
     });
+
+    it("packs done issues into the minimum number of lanes regardless of input order", () => {
+      // Three issues: one long-running (week 1-2), two short ones inside that span.
+      // If we packed in input order, the long one would claim lane 0 and the two shorts
+      // would each get their own lane (3 total). Sorting by startDay first => 2 lanes.
+      const issues = [
+        makeIssue({
+          id: "long", identifier: "A-LONG", estimate: 10,
+          startedAt: isoDate(MONDAY),
+          completedAt: isoDate(addDays(MONDAY, 13)), // ~2 weeks
+          state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+        }),
+        makeIssue({
+          id: "s1", identifier: "A-S1", estimate: 1,
+          startedAt: isoDate(addDays(MONDAY, 1)),
+          completedAt: isoDate(addDays(MONDAY, 1)),
+          state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+        }),
+        makeIssue({
+          id: "s2", identifier: "A-S2", estimate: 1,
+          startedAt: isoDate(addDays(MONDAY, 7)), // after S1 ends
+          completedAt: isoDate(addDays(MONDAY, 7)),
+          state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+        }),
+      ];
+      const result = scheduleIssues(issues, 1, MONDAY, [], [], WORKFLOW_STATES, "Merged");
+      const long = findIssue(result, "A-LONG")!;
+      const s1 = findIssue(result, "A-S1")!;
+      const s2 = findIssue(result, "A-S2")!;
+      // S1 and S2 don't overlap each other → same lane. Long overlaps both → different lane.
+      expect(s1.worker).toBe(s2.worker);
+      expect(long.worker).not.toBe(s1.worker);
+      const doneLanes = new Set([long.worker, s1.worker, s2.worker]);
+      expect(doneLanes.size).toBe(2);
+    });
+
+    it("orders done lanes by earliest start day", () => {
+      const issues = [
+        makeIssue({
+          id: "late", identifier: "A-LATE", estimate: 2,
+          startedAt: isoDate(addDays(MONDAY, 7)),
+          completedAt: isoDate(addDays(MONDAY, 8)),
+          state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+        }),
+        makeIssue({
+          id: "early1", identifier: "A-EARLY1", estimate: 10,
+          startedAt: isoDate(MONDAY),
+          completedAt: isoDate(addDays(MONDAY, 9)),
+          state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+        }),
+        makeIssue({
+          id: "early2", identifier: "A-EARLY2", estimate: 2,
+          startedAt: isoDate(addDays(MONDAY, 1)), // overlaps EARLY1 → different lane from it
+          completedAt: isoDate(addDays(MONDAY, 2)),
+          state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+        }),
+      ];
+      const result = scheduleIssues(issues, 1, MONDAY, [], [], WORKFLOW_STATES, "Merged");
+      const early1 = findIssue(result, "A-EARLY1")!;
+      const early2 = findIssue(result, "A-EARLY2")!;
+      const late = findIssue(result, "A-LATE")!;
+      // Earliest lane (worker 0) should be the one whose earliest start is MONDAY (EARLY1).
+      expect(early1.worker).toBe(0);
+      // EARLY2 starts before LATE and overlaps EARLY1 → goes to lane 1.
+      expect(early2.worker).toBe(1);
+      // LATE doesn't overlap EARLY2 → can share its lane (lane 1).
+      expect(late.worker).toBe(1);
+    });
   });
 
   describe("pinned (in-progress) issues", () => {

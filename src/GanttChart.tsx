@@ -1,7 +1,7 @@
 import { useMemo, useRef, useEffect, useState } from "react";
 import type { ScheduleResult, ScheduledIssue, CyclePeriod } from "./scheduler";
 import { dayToDate, formatDate, isBankHoliday } from "./scheduler";
-import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, MilestoneHeader, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, type MilestoneSummaryData } from "./StatusCircle";
+import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, MilestoneHeader, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, DONE_STRIPE, ongoingStatusBg, isBlockedDisplay, type MilestoneSummaryData } from "./StatusCircle";
 
 function formatParisTimeOfDay(isoString: string): string {
   const h = parseInt(new Date(isoString).toLocaleString("en-US", { timeZone: "Europe/Paris", hour: "numeric", hour12: false }), 10);
@@ -413,7 +413,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                         if (!cols) return null;
                         const [startCol, endCol] = cols;
                         const barWidth = Math.max((endCol - startCol) * DAY_WIDTH - 4, 4);
-                        const isBlocked = issue.blockedBy.some((b) => !b.done);
+                        const isBlocked = isBlockedDisplay(issue);
 
                         // Non-working/outside-cycle day overlays within bar
                         const grayedCols: number[] = [];
@@ -441,7 +441,8 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                               height: ROW_HEIGHT - 4,
                               background: [
                                 isBlocked ? BLOCKED_STRIPE : null,
-                                issue.isLate ? "rgba(245, 158, 11, 0.1)" : !issue.hasEstimate ? NO_ESTIMATE_BG : "var(--surface-hover)",
+                                issue.done ? DONE_STRIPE : null,
+                                ongoingStatusBg(issue.stateType, issue.done, issue.stateColor) ?? (!issue.hasEstimate ? NO_ESTIMATE_BG : "var(--surface-hover)"),
                               ].filter(Boolean).join(", "),
                               border: "1px solid var(--border)",
                               borderRadius: 4,
