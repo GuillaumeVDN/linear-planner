@@ -232,10 +232,21 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
   }, [schedule.todayOffset, dayToCol]);
 
   useEffect(() => {
-    if (containerRef.current && todayCol >= 0) {
-      containerRef.current.scrollLeft = Math.max(0, todayCol * DAY_WIDTH - 200);
+    if (!containerRef.current) return;
+    // Anchor: start of the oldest currently-ongoing issue. Fall back to today.
+    const ongoing = schedule.issues.filter((i) => i.stateType === "started" && !i.done);
+    let anchorCol = -1;
+    if (ongoing.length > 0) {
+      const oldestStart = Math.min(...ongoing.map((i) => i.startDay));
+      if (oldestStart >= 0 && oldestStart < dayToCol.length && dayToCol[oldestStart] >= 0) {
+        anchorCol = dayToCol[oldestStart];
+      }
     }
-  }, [todayCol]);
+    if (anchorCol < 0) anchorCol = todayCol;
+    if (anchorCol >= 0) {
+      containerRef.current.scrollLeft = Math.max(0, anchorCol * DAY_WIDTH);
+    }
+  }, [schedule.issues, todayCol, dayToCol]);
 
   useEffect(() => {
     const heights: Record<string, number> = {};
