@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: tsc
+        name: TypeScript type check
+        entry: npx tsc --noEmit
+        language: system
+        types_or: [ts, tsx]
+        pass_filenames: false

@@ -3,6 +3,7 @@ import type { ScheduleResult, ScheduledIssue, MilestoneInfo } from "./scheduler"
 import { dayToDate, formatDate } from "./scheduler";
 import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, MilestoneHeader, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, type MilestoneSummaryData } from "./StatusCircle";
 import ELK from "elkjs/lib/elk.bundled.js";
+import type { ElkNode, ElkExtendedEdge } from "elkjs/lib/elk-api";
 
 const NODE_WIDTH = 240;
 const NODE_HEIGHT = 88;
@@ -18,7 +19,7 @@ interface TreeNode {
   parentIds: string[];
 }
 
-interface ElkEdge {
+interface LayoutEdge {
   from: TreeNode;
   to: TreeNode;
   sections?: Array<{
@@ -33,7 +34,7 @@ interface MilestoneSection {
   name: string;
   summary: MilestoneSummaryData;
   nodes: TreeNode[];
-  edges: ElkEdge[];
+  edges: LayoutEdge[];
   contentWidth: number;
   contentHeight: number;
 }
@@ -128,7 +129,7 @@ async function layoutWithElk(
       edges: elkEdges,
     };
 
-    const layout = await elk.layout(elkGraph);
+    const layout = (await elk.layout(elkGraph)) as ElkNode;
 
     const nodeMap = new Map<string, TreeNode>();
     const issueMap = new Map(msIssues.map((i) => [i.id, i]));
@@ -145,8 +146,8 @@ async function layoutWithElk(
       nodeMap.set(issue.id, node);
     }
 
-    const edges: ElkEdge[] = [];
-    for (const elkEdge of layout.edges ?? []) {
+    const edges: LayoutEdge[] = [];
+    for (const elkEdge of (layout.edges ?? []) as ElkExtendedEdge[]) {
       const fromId = elkEdge.sources?.[0];
       const toId = elkEdge.targets?.[0];
       if (!fromId || !toId) continue;
@@ -182,7 +183,7 @@ async function layoutWithElk(
   return sections;
 }
 
-function edgePath(edge: ElkEdge): string {
+function edgePath(edge: LayoutEdge): string {
   if (edge.sections && edge.sections.length > 0) {
     const parts: string[] = [];
     for (const section of edge.sections) {
