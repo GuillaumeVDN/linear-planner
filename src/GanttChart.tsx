@@ -360,7 +360,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                       paddingBottom: 6, fontSize: 11,
                       color: h.isGrayed || isPast ? "var(--text-muted)" : "var(--text)",
                       opacity: h.isGrayed ? 0.5 : isPast ? 0.6 : 1,
-                      borderLeft: h.col === todayCol ? "2px solid #ef4444" : (h.col > 0 && (h.isCycleStart || h.isCycleEnd)) ? "2px solid var(--border)" : h.isMonday ? "1px solid var(--border)" : "none",
+                      borderLeft: h.col === todayCol ? "1px solid rgba(239, 68, 68, 0.6)" : (h.col > 0 && (h.isCycleStart || h.isCycleEnd)) ? "2px solid var(--border)" : h.isMonday ? "1px solid var(--border)" : "none",
                       background: h.col === todayCol ? "rgba(128,128,128,0.06)" : isPast ? "rgba(128,128,128,0.08)" : undefined,
                     }}
                   >
@@ -401,13 +401,17 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               {todayCol >= 0 && (
                 <div style={{ position: "absolute", left: todayCol * DAY_WIDTH, top: 0, width: DAY_WIDTH, height: "100%", background: "rgba(128,128,128,0.05)", pointerEvents: "none", zIndex: 1 }} />
               )}
+              {/* Today vertical line, continues from the header */}
+              {todayCol >= 0 && (
+                <div style={{ position: "absolute", left: todayCol * DAY_WIDTH, top: 0, width: 1, height: "100%", background: "rgba(239, 68, 68, 0.6)", pointerEvents: "none", zIndex: 1 }} />
+              )}
 
               {/* Milestone groups */}
               {milestoneGroups.map((group) => (
                 <div key={group.milestoneId ?? "none"}>
-                  <div style={{ height: msHeaderHeights[group.milestoneId ?? "none"] ?? 0, borderTop: "2px solid var(--iteration-line)" }} />
+                  <div style={{ position: "relative", zIndex: 3, height: msHeaderHeights[group.milestoneId ?? "none"] ?? 0, borderTop: "2px solid var(--iteration-line)" }} />
                   {group.workerRows.map((row) => (
-                    <div key={row.worker} style={{ position: "relative", height: ROW_HEIGHT + ROW_GAP, display: "flex", alignItems: "center", borderBottom: "1px solid var(--border)" }}>
+                    <div key={row.worker} style={{ position: "relative", zIndex: 2, height: ROW_HEIGHT + ROW_GAP, display: "flex", alignItems: "center", borderBottom: "1px solid var(--border)" }}>
                       {row.issues.map((issue) => {
                         const cols = getBarCols(issue.startDay, issue.endDay);
                         if (!cols) return null;
@@ -458,6 +462,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                               whiteSpace: "nowrap",
                               cursor: "pointer",
                               opacity: issue.done ? 0.5 : 1,
+                              zIndex: 2,
                             }}
                           >
                             {grayedCols.map((relCol) => (
