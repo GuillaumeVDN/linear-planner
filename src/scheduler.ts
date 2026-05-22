@@ -1,4 +1,5 @@
 import type { LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState } from "./linear";
+import { buildWorkingDayCalendar, dateToCalendarOffset, halfDayAdjustment } from "./workingDays";
 
 export interface ScheduledIssue {
   id: string;
@@ -18,7 +19,7 @@ export interface ScheduledIssue {
   priority: number;
   priorityLabel: string;
   assigneeAvatarUrl: string | null;
-  assigneeName: string | null; // 0-1 for "started" type, 0 for backlog/unstarted, 1 for completed
+  assigneeName: string | null;
   daysSpent: number | null; // working days from startedAt to today (started/done), null if not started
   hasEstimate: boolean;
   done: boolean;
@@ -52,125 +53,6 @@ export interface ScheduleResult {
   cycles: CyclePeriod[];
 }
 
-// --- French public holidays ---
-
-function easterSunday(year: number): Date {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31);
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(year, month - 1, day);
-}
-
-function frenchHolidays(year: number): Set<string> {
-  const fmt = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const addDays = (d: Date, n: number) => {
-    const r = new Date(d);
-    r.setDate(r.getDate() + n);
-    return r;
-  };
-  const easter = easterSunday(year);
-  return new Set(
-    [
-      new Date(year, 0, 1), // New Year
-      new Date(year, 4, 1), // Labour Day
-      new Date(year, 4, 8), // Victory in Europe
-      new Date(year, 6, 14), // Bastille Day
-      new Date(year, 7, 15), // Assumption
-      new Date(year, 10, 1), // All Saints
-      new Date(year, 10, 11), // Armistice
-      new Date(year, 11, 25), // Christmas
-      addDays(easter, 1), // Easter Monday
-      addDays(easter, 39), // Ascension Thursday
-      addDays(easter, 50), // Whit Monday
-    ].map(fmt),
-  );
-}
-
-const holidayCache = new Map<number, Set<string>>();
-function isHolidayDate(date: Date): boolean {
-  const year = date.getFullYear();
-  if (!holidayCache.has(year)) holidayCache.set(year, frenchHolidays(year));
-  const key = `${year}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  return holidayCache.get(year)!.has(key);
-}
-
-/** Exported for use by the chart to gray out non-working day columns */
-export function isNonWorkingDay(date: Date): boolean {
-  const dow = date.getDay();
-  return dow === 0 || dow === 6 || isHolidayDate(date);
-}
-
-/** Check if a date is a bank holiday (weekday holiday, not a weekend) */
-export function isBankHoliday(date: Date): boolean {
-  const dow = date.getDay();
-  return dow !== 0 && dow !== 6 && isHolidayDate(date);
-}
-
-// --- Working day calendar ---
-
-function buildWorkingDayCalendar(startDate: Date, maxCalendarDays: number) {
-  const workingDays: number[] = [];
-  const calendarToWd: number[] = [];
-
-  for (let d = 0; d < maxCalendarDays; d++) {
-    const date = new Date(startDate);
-    date.setDate(date.getDate() + d);
-    if (!isNonWorkingDay(date)) {
-      calendarToWd.push(workingDays.length);
-      workingDays.push(d);
-    } else {
-      calendarToWd.push(-1);
-    }
-  }
-
-  return {
-    toCalendar(wdIndex: number): number {
-      if (wdIndex < workingDays.length) return workingDays[wdIndex];
-      let d = workingDays.length > 0 ? workingDays[workingDays.length - 1] + 1 : 0;
-      let idx = workingDays.length;
-      while (idx <= wdIndex) {
-        const date = new Date(startDate);
-        date.setDate(date.getDate() + d);
-        if (!isNonWorkingDay(date)) {
-          if (idx === wdIndex) return d;
-          idx++;
-        }
-        d++;
-      }
-      return d;
-    },
-    /** Convert calendar day offset to working day index (next wd if non-working) */
-    toWorkingDay(calendarDay: number): number {
-      if (calendarDay >= 0 && calendarDay < calendarToWd.length) {
-        const wd = calendarToWd[calendarDay];
-        if (wd >= 0) return wd;
-      }
-      // Find next working day
-      let d = Math.max(calendarDay, 0);
-      while (d < calendarToWd.length) {
-        if (calendarToWd[d] >= 0) return calendarToWd[d];
-        d++;
-      }
-      return workingDays.length;
-    },
-    workingDays,
-    calendarToWd,
-  };
-}
-
-const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const DEFAULT_ESTIMATE = 3;
 
 /**
@@ -178,10 +60,8 @@ const DEFAULT_ESTIMATE = 3;
  * Done = completed/canceled state type, OR "started" type with position >= "merged" position.
  */
 function buildIsDone(issues: LinearIssue[], workflowStates: LinearWorkflowState[], endStatusName: string): (issue: LinearIssue) => boolean {
-  // Find the position of the end status within the "started" type
   let endPosition: number | null = null;
 
-  // First try exact name match from configured end status
   if (endStatusName) {
     for (const state of workflowStates) {
       if (state.type === "started" && state.name === endStatusName) {
@@ -192,7 +72,6 @@ function buildIsDone(issues: LinearIssue[], workflowStates: LinearWorkflowState[
     }
   }
 
-  // Fallback: look for "merged" in workflow states
   if (endPosition === null) {
     for (const state of workflowStates) {
       if (state.type === "started" && state.name.toLowerCase().includes("merged")) {
@@ -203,7 +82,6 @@ function buildIsDone(issues: LinearIssue[], workflowStates: LinearWorkflowState[
     }
   }
 
-  // Fallback: derive from issues
   if (endPosition === null) {
     for (const issue of issues) {
       if (issue.state.type === "started" && issue.state.name.toLowerCase().includes("merged")) {
@@ -222,37 +100,12 @@ function buildIsDone(issues: LinearIssue[], workflowStates: LinearWorkflowState[
   };
 }
 
-function dateToCalendarOffset(date: Date, startDate: Date): number {
-  return Math.round((date.getTime() - startDate.getTime()) / MS_PER_DAY);
-}
-
-export function getParisHourMinute(isoString: string): { hour: number; minute: number } {
-  const d = new Date(isoString);
-  const hour = parseInt(d.toLocaleString("en-US", { timeZone: "Europe/Paris", hour: "numeric", hour12: false }), 10);
-  const minute = parseInt(d.toLocaleString("en-US", { timeZone: "Europe/Paris", minute: "numeric" }), 10);
-  return { hour, minute };
-}
-
-function isAfterThreshold(isoString: string): boolean {
-  const { hour, minute } = getParisHourMinute(isoString);
-  return hour > 13 || (hour === 13 && minute >= 30);
-}
-
-export function halfDayAdjustment(startedAt: string | null, endedAt: string | null): number {
-  let adj = 0;
-  if (startedAt && isAfterThreshold(startedAt)) adj -= 0.5;
-  if (endedAt && !isAfterThreshold(endedAt)) adj -= 0.5;
-  return adj;
-}
-
 /**
  * Build a schedulable-day calendar that skips cooldown periods.
  *
- * schedulableDays[si] = working day index of the si-th schedulable day.
- *
  * If no cycles are provided, all working days are schedulable.
  * If cycles are provided, only working days within a cycle are schedulable.
- * Working days past the last known cycle are also schedulable (we can't predict future cycles).
+ * Working days past the last known cycle are also schedulable.
  */
 function buildSchedulableDays(
   cal: ReturnType<typeof buildWorkingDayCalendar>,
@@ -260,7 +113,6 @@ function buildSchedulableDays(
   startDate: Date,
 ) {
   if (linearCycles.length === 0) {
-    // No cycles — every working day is schedulable
     return {
       toWorkingDay(si: number) { return si; },
       toSchedulable(wdIndex: number) { return wdIndex; },
@@ -268,7 +120,6 @@ function buildSchedulableDays(
     };
   }
 
-  // Convert cycles to working-day ranges [startWd, endWd) — inclusive of cycle dates
   const cycleWdRanges: Array<{ startWd: number; endWd: number }> = [];
   for (const c of linearCycles) {
     const cStart = new Date(c.startsAt);
@@ -278,19 +129,15 @@ function buildSchedulableDays(
     const startCal = dateToCalendarOffset(cStart, startDate);
     const endCal = dateToCalendarOffset(cEnd, startDate);
     const startWd = cal.toWorkingDay(startCal);
-    // endWd: first working day on or after the cycle end date (exclusive)
     const endWd = cal.toWorkingDay(endCal);
     if (endWd > startWd) cycleWdRanges.push({ startWd, endWd });
   }
 
-  // Find the last known cycle end
   const lastCycleEndWd = cycleWdRanges.length > 0
     ? Math.max(...cycleWdRanges.map((r) => r.endWd))
     : 0;
 
-  // Check if a working day is inside any cycle
   function isInCycle(wdIndex: number): boolean {
-    // Past last known cycle — allow scheduling (we don't know future cycles)
     if (wdIndex >= lastCycleEndWd) return true;
     for (const r of cycleWdRanges) {
       if (wdIndex >= r.startWd && wdIndex < r.endWd) return true;
@@ -298,9 +145,7 @@ function buildSchedulableDays(
     return false;
   }
 
-  // Build forward mapping: schedulable index → working day index
   const schedulable: number[] = [];
-  // And reverse: working day index → schedulable index (or -1 if cooldown)
   const wdToSchedulable: number[] = [];
 
   const maxWd = Math.max(lastCycleEndWd + 500, cal.workingDays.length);
@@ -316,7 +161,6 @@ function buildSchedulableDays(
   return {
     toWorkingDay(si: number): number {
       if (si < schedulable.length) return schedulable[si];
-      // Beyond precomputed: past last cycle, every working day is schedulable
       const overflow = si - schedulable.length;
       return (schedulable.length > 0 ? schedulable[schedulable.length - 1] + 1 : 0) + overflow;
     },
@@ -326,16 +170,14 @@ function buildSchedulableDays(
         const si = wdToSchedulable[wdIndex];
         if (si >= 0) return si;
       }
-      // Find next schedulable day
       let wd = Math.max(wdIndex, 0);
       while (wd < wdToSchedulable.length) {
         if (wdToSchedulable[wd] >= 0) return wdToSchedulable[wd];
         wd++;
       }
-      // Past precomputed range
       return schedulable.length + (wd - (schedulable.length > 0 ? schedulable[schedulable.length - 1] + 1 : 0));
     },
-    /** Count schedulable days in the inclusive working-day range [startWd, endWd]. Cooldown days are excluded. */
+    /** Count schedulable days in the inclusive working-day range [startWd, endWd]. Cooldown days excluded. */
     countSchedulable(startWd: number, endWd: number): number {
       if (endWd < startWd) return 0;
       let count = 0;
@@ -343,7 +185,6 @@ function buildSchedulableDays(
         if (wd >= 0 && wd < wdToSchedulable.length) {
           if (wdToSchedulable[wd] >= 0) count++;
         } else if (wd >= wdToSchedulable.length) {
-          // Past last known cycle — treat as schedulable
           count++;
         }
       }
@@ -371,7 +212,6 @@ export function scheduleIssues(
   const todayWd = cal.toWorkingDay(dateToCalendarOffset(today, startDate));
   const todaySi = sched.toSchedulable(todayWd);
 
-  // Compute progress for "started" states from the full workflow state list
   const startedStates = workflowStates
     .filter((s) => s.type === "started")
     .sort((a, b) => a.position - b.position);
@@ -405,7 +245,6 @@ export function scheduleIssues(
     }
   }
 
-  // Count downstream dependents for priority
   const downstream = new Map<string, number>();
   function countDownstream(id: string, visited: Set<string>): number {
     if (visited.has(id)) return 0;
@@ -422,7 +261,6 @@ export function scheduleIssues(
   }
   for (const issue of issues) countDownstream(issue.id, new Set());
 
-  // --- Scheduling state (non-done issues only) ---
   const scheduled: ScheduledIssue[] = [];
   const endSiMap = new Map<string, number>();
   const doneEndDateStr = new Map<string, string | null>();
@@ -435,7 +273,6 @@ export function scheduleIssues(
       if (isDone(issue)) {
         daysSpent = Math.max(0.5, duration + halfDayAdjustment(issue.startedAt, doneEndDateStr.get(issue.id) ?? null));
       } else {
-        // In-progress issues: schedulable days from startedAt to today (excludes weekends, holidays, cooldown)
         const startedDate = new Date(issue.startedAt);
         startedDate.setHours(0, 0, 0, 0);
         const startedWd = cal.toWorkingDay(dateToCalendarOffset(startedDate, startDate));
@@ -465,7 +302,7 @@ export function scheduleIssues(
     };
   }
 
-  // --- Pre-populate done issues in dependency maps (so non-done issues see their blockers as resolved) ---
+  // --- Pre-populate done issues so non-done issues see their blockers as resolved ---
   for (const issue of issues) {
     if (!isDone(issue) || !issue.startedAt) continue;
     scheduledIds.add(issue.id);
@@ -571,7 +408,6 @@ export function scheduleIssues(
     const msIssues = (unpinnedByMs.get(msId) ?? []);
     const msRemaining = new Set(msIssues.map((i) => i.id));
 
-    // Helper: get ready issues (all blockers scheduled) and their earliest start
     function getReadyIssues(atTime: number): Array<{ issue: LinearIssue; earliestSi: number }> {
       const result: Array<{ issue: LinearIssue; earliestSi: number }> = [];
       for (const issue of msIssues) {
@@ -582,7 +418,6 @@ export function scheduleIssues(
         for (const bid of undoneDeps) {
           earliest = Math.max(earliest, endSiMap.get(bid) ?? 0);
         }
-        // Unstarted issues (e.g. "To do") can't be scheduled before today
         if (issue.state.type === "unstarted" || issue.state.type === "backlog" || issue.state.type === "triage") {
           earliest = Math.max(earliest, todaySi);
         }
@@ -590,7 +425,6 @@ export function scheduleIssues(
           result.push({ issue, earliestSi: earliest });
         }
       }
-      // Sort: most downstream dependents first, then by identifier
       result.sort((a, b) => {
         const da = downstream.get(a.issue.id) ?? 0;
         const db = downstream.get(b.issue.id) ?? 0;
@@ -602,7 +436,6 @@ export function scheduleIssues(
 
     let safetyCounter = msIssues.length * effectiveNumWorkers + 100;
     while (msRemaining.size > 0 && safetyCounter-- > 0) {
-      // Find the used worker freed soonest
       let bestUsedW = -1;
       let bestUsedFree = Infinity;
       for (let w = 0; w < effectiveNumWorkers; w++) {
@@ -612,11 +445,9 @@ export function scheduleIssues(
         }
       }
 
-      // Try to assign work to the earliest-free used worker
       if (bestUsedW >= 0) {
         const ready = getReadyIssues(bestUsedFree);
         if (ready.length > 0) {
-          // Check if ANY ready issue could start earlier on an unused worker
           const unusedW = workerFreeAtSi.findIndex((f) => f === 0);
           if (unusedW >= 0) {
             const earlyIssue = ready.reduce<(typeof ready)[0] | null>((best, r) =>
@@ -633,12 +464,10 @@ export function scheduleIssues(
         }
       }
 
-      // No used worker has ready work — check if unused workers could help
       const allReady = getReadyIssues(Infinity);
       if (allReady.length === 0) break;
 
       const nextReadySi = allReady[0].earliestSi;
-      // Check if any used worker is free at or before nextReadySi
       let canUseExisting = false;
       for (let w = 0; w < effectiveNumWorkers; w++) {
         if (workerFreeAtSi[w] > 0 && workerFreeAtSi[w] <= nextReadySi) {
@@ -653,7 +482,6 @@ export function scheduleIssues(
       }
       if (canUseExisting) continue;
 
-      // No used worker can handle it
       const allUsedBusy = !Array.from({ length: effectiveNumWorkers }, (_, w) => w)
         .some((w) => workerFreeAtSi[w] > 0 && workerFreeAtSi[w] <= nextReadySi);
 
@@ -672,7 +500,6 @@ export function scheduleIssues(
         }
       }
 
-      // Advance the earliest used worker to the next event
       if (bestUsedW >= 0) {
         const nextEvent = Math.min(
           ...Array.from(msRemaining).map((id) => {
@@ -694,7 +521,6 @@ export function scheduleIssues(
       }
     }
 
-    // Update milestone barrier
     for (const issue of msIssues) {
       milestoneBarrier = Math.max(milestoneBarrier, endSiMap.get(issue.id) ?? 0);
     }
@@ -706,7 +532,6 @@ export function scheduleIssues(
   }
 
   // --- Post: add done issues as informational rows ---
-  // Done issues are not scheduled to workers — they just show actual dates.
   const doneItems: ScheduledIssue[] = [];
   for (const issue of issues) {
     if (!isDone(issue) || !issue.startedAt) continue;
@@ -732,7 +557,6 @@ export function scheduleIssues(
   }
   const numDoneLanes = doneLaneIntervals.length;
 
-  // Offset non-done worker rows below done lanes, sort each group by earliest start
   for (const s of scheduled) s.worker += numDoneLanes;
 
   function sortRowsByEarliestStart(items: ScheduledIssue[], offset: number) {
@@ -749,27 +573,24 @@ export function scheduleIssues(
   sortRowsByEarliestStart(doneItems, 0);
   sortRowsByEarliestStart(scheduled, numDoneLanes);
 
-  // Merge done items into result
   const allIssues = [...doneItems, ...scheduled];
 
   const usedWorkers = scheduled.length > 0 ? Math.max(...scheduled.map((s) => s.worker)) - numDoneLanes + 1 : 1;
   let totalDays = Math.max(...allIssues.map((s) => s.endDay), 0);
   const todayOffset = dateToCalendarOffset(today, startDate);
 
-  // Milestone boundaries
   const milestoneEndDays = new Map<string, { name: string; endDay: number }>();
   for (const s of allIssues) {
     if (s.milestone) {
       const existing = milestoneEndDays.get(s.milestone.id);
       if (!existing || s.endDay > existing.endDay) {
         milestoneEndDays.set(s.milestone.id, { name: s.milestone.name, endDay: s.endDay });
-    }
+      }
     }
   }
   const iterations = Array.from(milestoneEndDays.values()).sort((a, b) => a.endDay - b.endDay);
   if (iterations.length > 0) iterations.pop();
 
-  // Cycle periods
   const cycles: CyclePeriod[] = linearCycles
     .map((c) => {
       const cStart = new Date(c.startsAt); cStart.setHours(0, 0, 0, 0);
@@ -782,16 +603,4 @@ export function scheduleIssues(
   const milestones: MilestoneInfo[] = [...projectMilestones].sort((a, b) => a.sortOrder - b.sortOrder);
 
   return { issues: allIssues, milestones, usedWorkers, totalDays, startDate, todayOffset, iterations, cycles };
-}
-
-/** Convert a day offset to a Date */
-export function dayToDate(startDate: Date, dayOffset: number): Date {
-  const d = new Date(startDate);
-  d.setDate(d.getDate() + dayOffset);
-  return d;
-}
-
-/** Format a date as "Mon DD" */
-export function formatDate(date: Date): string {
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }

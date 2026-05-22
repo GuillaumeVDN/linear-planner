@@ -1,48 +1,22 @@
 import { useMemo, useRef, useEffect, useState } from "react";
-import type { ScheduleResult, ScheduledIssue, CyclePeriod } from "./scheduler";
-import { dayToDate, formatDate, isBankHoliday } from "./scheduler";
-import { StatusCircle, BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge, MilestoneHeader, Legend, buildMilestoneSummary, BLOCKED_STRIPE, NO_ESTIMATE_BG, DONE_STRIPE, ongoingStatusBg, isBlockedDisplay, type MilestoneSummaryData } from "./StatusCircle";
-
-function formatParisTimeOfDay(isoString: string): string {
-  const h = parseInt(new Date(isoString).toLocaleString("en-US", { timeZone: "Europe/Paris", hour: "numeric", hour12: false }), 10);
-  return h < 13 ? "morning" : "afternoon";
-}
-
-const ROW_HEIGHT = 36;
-const ROW_GAP = 4;
-const CYCLE_ROW_HEIGHT = 22;
-const DATE_ROW_HEIGHT = 50;
-const HEADER_HEIGHT = CYCLE_ROW_HEIGHT + DATE_ROW_HEIGHT;
-const DAY_WIDTH = 40;
-const LABEL_WIDTH = 220;
-
-const CYCLE_COLORS = [
-  "rgba(99, 102, 241, 0.15)",
-  "rgba(168, 85, 247, 0.15)",
-  "rgba(14, 165, 233, 0.15)",
-  "rgba(20, 184, 166, 0.15)",
-];
+import type { ScheduleResult, ScheduledIssue } from "./scheduler";
+import { dayToDate, formatDate, isBankHoliday, formatParisTimeOfDay } from "./workingDays";
+import { StatusCircle } from "./StatusCircle";
+import { BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge } from "./CardIcons";
+import { MilestoneHeader, buildMilestoneSummary, type MilestoneSummaryData } from "./MilestoneHeader";
+import { Legend } from "./Legend";
+import { BLOCKED_STRIPE, NO_ESTIMATE_BG, DONE_STRIPE, ongoingStatusBg, isBlockedDisplay } from "./cardStyle";
+import {
+  ROW_HEIGHT, ROW_GAP, CYCLE_ROW_HEIGHT, DATE_ROW_HEIGHT, HEADER_HEIGHT,
+  DAY_WIDTH, LABEL_WIDTH, CYCLE_COLORS,
+  type DayInfo, isOutsideCycles,
+} from "./ganttLayout";
 
 interface MilestoneGroup {
   milestoneId: string | null;
   milestoneName: string;
   workerRows: Array<{ worker: number; issues: ScheduledIssue[] }>;
   summary: MilestoneSummaryData;
-}
-
-interface DayInfo {
-  day: number; // calendar day offset
-  col: number; // visual column index
-  date: Date;
-  isGrayed: boolean; // non-working or outside cycle
-  isMonday: boolean;
-  isCycleEnd: boolean;
-  isCycleStart: boolean;
-}
-
-function isOutsideCycles(day: number, cycles: CyclePeriod[]): boolean {
-  if (cycles.length === 0) return false;
-  return !cycles.some((c) => day >= c.startDay && day < c.endDay);
 }
 
 interface GanttChartProps {

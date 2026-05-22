@@ -6,163 +6,11 @@ import { scheduleIssues } from "./scheduler";
 import type { ScheduleResult } from "./scheduler";
 import { GanttChart } from "./GanttChart";
 import { DependencyTree } from "./DependencyTree";
-import { StatusCircle } from "./StatusCircle";
-
-// --- Routing helpers ---
-const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, ""); // e.g. "/linear-planner"
-
-function getProjectIdFromUrl(): string | null {
-  const path = window.location.pathname;
-  const prefix = BASE_PATH + "/";
-  if (path.startsWith(prefix)) {
-    const rest = path.slice(prefix.length).replace(/\/$/, "");
-    if (rest && rest !== "" && rest !== "callback") return rest;
-  }
-  return null;
-}
-
-function navigateToProject(projectId: string | null) {
-  const url = projectId ? `${BASE_PATH}/${projectId}/` : `${BASE_PATH}/`;
-  window.history.pushState(null, "", url);
-}
-
-// --- Per-project storage ---
-const GLOBAL_STORAGE_KEY = "linear-planner";
-
-type Mode = "workers" | "tree";
-
-interface ProjectSettings {
-  numWorkers: number;
-  mode: Mode;
-  showWeekends: boolean;
-  showHolidays: boolean;
-  showCooldown: boolean;
-  startStatusName: string;
-  endStatusName: string;
-}
-
-const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
-  numWorkers: 2,
-  mode: "workers",
-  showWeekends: false,
-  showHolidays: true,
-  showCooldown: true,
-  startStatusName: "",
-  endStatusName: "",
-};
-
-function loadProjectSettings(projectId: string): ProjectSettings {
-  try {
-    const raw = localStorage.getItem(`${GLOBAL_STORAGE_KEY}:${projectId}`);
-    if (!raw) return DEFAULT_PROJECT_SETTINGS;
-    const data = JSON.parse(raw);
-    return {
-      numWorkers: typeof data.numWorkers === "number" && data.numWorkers >= 1 ? data.numWorkers : 2,
-      mode: data.mode === "tree" ? "tree" : "workers",
-      showWeekends: data.showWeekends ?? false,
-      showHolidays: data.showHolidays ?? true,
-      showCooldown: data.showCooldown ?? true,
-      startStatusName: typeof data.startStatusName === "string" ? data.startStatusName : "",
-      endStatusName: typeof data.endStatusName === "string" ? data.endStatusName : "",
-    };
-  } catch {
-    return DEFAULT_PROJECT_SETTINGS;
-  }
-}
-
-function saveProjectSettings(projectId: string, s: ProjectSettings) {
-  localStorage.setItem(`${GLOBAL_STORAGE_KEY}:${projectId}`, JSON.stringify(s));
-}
-
-// --- Workflow state helpers ---
-
-const STATE_TYPE_ORDER: Record<string, number> = { backlog: 0, triage: 1, unstarted: 2, started: 3, completed: 4, canceled: 5 };
-
-function computeEffectiveEndStatus(endStatusName: string, states: LinearWorkflowState[]): string {
-  const candidates = states.filter((s) => s.type === "started" || s.type === "completed");
-  if (endStatusName && candidates.some((s) => s.name === endStatusName)) return endStatusName;
-  const merged = candidates.find((s) => s.type === "started" && s.name.toLowerCase().includes("merged"));
-  if (merged) return merged.name;
-  const completed = candidates.find((s) => s.type === "completed");
-  return completed ? completed.name : "";
-}
-
-function sortStates(states: LinearWorkflowState[]): LinearWorkflowState[] {
-  return [...states].sort((a, b) => {
-    const ta = STATE_TYPE_ORDER[a.type] ?? 9;
-    const tb = STATE_TYPE_ORDER[b.type] ?? 9;
-    if (ta !== tb) return ta - tb;
-    return a.position - b.position;
-  });
-}
-
-function getStateProgress(state: LinearWorkflowState, allStartedStates: LinearWorkflowState[]): number {
-  if (state.type === "completed") return 1;
-  if (state.type === "canceled") return 0;
-  if (state.type !== "started" || allStartedStates.length === 0) return 0;
-  const idx = allStartedStates.findIndex((s) => s.id === state.id);
-  if (idx < 0) return 0.5;
-  return (idx + 1) / (allStartedStates.length + 1);
-}
-
-function StatusSelect({ states, startedStates, value, onChange }: {
-  states: LinearWorkflowState[];
-  startedStates: LinearWorkflowState[];
-  value: string;
-  onChange: (name: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const selected = states.find((s) => s.name === value);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
-  return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        style={{ ...headerInputStyle, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", background: "var(--bg)", minWidth: 120 }}
-      >
-        {selected && <StatusCircle stateType={selected.type} color={selected.color} progress={getStateProgress(selected, startedStates)} size={12} />}
-        <span style={{ flex: 1, textAlign: "left" }}>{selected?.name ?? value}</span>
-        <span style={{ fontSize: 10, opacity: 0.5 }}>{open ? "\u25B2" : "\u25BC"}</span>
-      </button>
-      {open && (
-        <div style={{
-          position: "absolute", top: "100%", left: 0, marginTop: 2, zIndex: 100,
-          background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 6,
-          boxShadow: "0 4px 12px rgba(0,0,0,0.15)", minWidth: "100%", maxHeight: 260, overflowY: "auto",
-        }}>
-          {states.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => { onChange(s.name); setOpen(false); }}
-              style={{
-                display: "flex", alignItems: "center", gap: 6, width: "100%", padding: "6px 10px",
-                border: "none", background: s.name === value ? "var(--surface-hover)" : "transparent",
-                color: "var(--text)", fontSize: 13, cursor: "pointer", textAlign: "left",
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--surface-hover)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = s.name === value ? "var(--surface-hover)" : "transparent"; }}
-            >
-              <StatusCircle stateType={s.type} color={s.color} progress={getStateProgress(s, startedStates)} size={12} />
-              {s.name}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// --- App ---
+import { BASE_PATH, getProjectIdFromUrl, navigateToProject } from "./routing";
+import { loadProjectSettings, saveProjectSettings, LEGACY_STORAGE_KEY, type Mode } from "./projectSettings";
+import { computeEffectiveEndStatus, sortStates } from "./workflowState";
+import { StatusSelect } from "./StatusSelect";
+import { centerCard, headerInputStyle, tabButtonStyle, stepperButtonStyle, buttonStyle } from "./appStyles";
 
 export default function App() {
   const [connected, setConnected] = useState(false);
@@ -232,7 +80,6 @@ export default function App() {
     const callbackPath = getCallbackPath();
     const pathname = window.location.pathname;
 
-    // Handle OAuth callback
     if (pathname === callbackPath || pathname === callbackPath + "/") {
       const params = new URLSearchParams(window.location.search);
       const code = params.get("code");
@@ -261,14 +108,11 @@ export default function App() {
         return;
       }
 
-      // No code/state in callback URL, redirect to main
       window.history.replaceState(null, "", BASE_PATH + "/");
     }
 
-    // Normal session restoration from stored tokens
     if (!isAuthenticated()) {
-      // Clean up legacy API key storage
-      localStorage.removeItem(GLOBAL_STORAGE_KEY);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
       setRestoring(false);
       return;
     }
@@ -308,21 +152,18 @@ export default function App() {
     })();
   }, []);
 
-  // Save per-project settings when they change
   useEffect(() => {
     if (connected && selectedProjectId) {
       saveProjectSettings(selectedProjectId, { numWorkers, mode, showWeekends, showHolidays, showCooldown, startStatusName, endStatusName });
     }
   }, [connected, selectedProjectId, numWorkers, mode, showWeekends, showHolidays, showCooldown, startStatusName, endStatusName]);
 
-  // Update URL when project changes
   useEffect(() => {
     if (connected && selectedProjectId) {
       navigateToProject(selectedProjectId);
     }
   }, [connected, selectedProjectId]);
 
-  // Handle browser back/forward
   useEffect(() => {
     const handler = () => {
       const pid = getProjectIdFromUrl();
@@ -342,7 +183,6 @@ export default function App() {
     return () => window.removeEventListener("popstate", handler);
   }, [selectedProjectId, projects]);
 
-  // When project changes, load per-project settings and fetch data
   const handleProjectChange = useCallback((projectId: string) => {
     const ps = loadProjectSettings(projectId);
     setNumWorkers(ps.numWorkers);
@@ -391,7 +231,6 @@ export default function App() {
           if (d < start) start = d;
         }
       }
-      // Fetch end dates for done issues from state history
       const endName = computeEffectiveEndStatus(endStatusNameRef.current, states);
       let endPosition: number | null = null;
       for (const s of states) {
@@ -567,9 +406,3 @@ export default function App() {
     </div>
   );
 }
-
-const centerCard: React.CSSProperties = { maxWidth: 420, width: "100%", margin: "auto", padding: 32, background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)" };
-const headerInputStyle: React.CSSProperties = { padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 13, outline: "none" };
-const tabButtonStyle: React.CSSProperties = { padding: "8px 20px", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" };
-const stepperButtonStyle: React.CSSProperties = { padding: "4px 10px", border: "none", background: "var(--surface-hover)", color: "var(--text)", fontSize: 14, fontWeight: 600, cursor: "pointer", lineHeight: 1 };
-const buttonStyle: React.CSSProperties = { padding: "10px 20px", borderRadius: 6, border: "none", background: "var(--accent)", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" };
