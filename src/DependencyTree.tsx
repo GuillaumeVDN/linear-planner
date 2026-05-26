@@ -200,7 +200,7 @@ export function DependencyTree({ schedule }: { schedule: ScheduleResult }) {
                             fontWeight: 500,
                             lineHeight: 1.3,
                             display: "-webkit-box",
-                            WebkitLineClamp: node.issue.labels.length > 0 ? 1 : 2,
+                            WebkitLineClamp: 2,
                             WebkitBoxOrient: "vertical",
                             overflow: "hidden",
                           }}
