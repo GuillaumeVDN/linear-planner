@@ -21,6 +21,7 @@ export default function App() {
   const [showWeekends, setShowWeekends] = useState(false);
   const [showHolidays, setShowHolidays] = useState(true);
   const [showCooldown, setShowCooldown] = useState(true);
+  const [drawCrossMilestoneDeps, setDrawCrossMilestoneDeps] = useState(false);
   const [startStatusName, setStartStatusName] = useState("");
   const [endStatusName, setEndStatusName] = useState("");
   const [doneEndDates, setDoneEndDates] = useState<Map<string, string>>(new Map());
@@ -135,6 +136,7 @@ export default function App() {
           const ps = loadProjectSettings(pid);
           setNumWorkers(ps.numWorkers);
           setMode(ps.mode);
+          setDrawCrossMilestoneDeps(ps.drawCrossMilestoneDeps);
           setShowWeekends(ps.showWeekends);
           setShowHolidays(ps.showHolidays);
           setShowCooldown(ps.showCooldown);
@@ -154,9 +156,9 @@ export default function App() {
 
   useEffect(() => {
     if (connected && selectedProjectId) {
-      saveProjectSettings(selectedProjectId, { numWorkers, mode, showWeekends, showHolidays, showCooldown, startStatusName, endStatusName });
+      saveProjectSettings(selectedProjectId, { numWorkers, mode, drawCrossMilestoneDeps, showWeekends, showHolidays, showCooldown, startStatusName, endStatusName });
     }
-  }, [connected, selectedProjectId, numWorkers, mode, showWeekends, showHolidays, showCooldown, startStatusName, endStatusName]);
+  }, [connected, selectedProjectId, numWorkers, mode, drawCrossMilestoneDeps, showWeekends, showHolidays, showCooldown, startStatusName, endStatusName]);
 
   useEffect(() => {
     if (connected && selectedProjectId) {
@@ -171,6 +173,7 @@ export default function App() {
         const ps = loadProjectSettings(pid);
         setNumWorkers(ps.numWorkers);
         setMode(ps.mode);
+        setDrawCrossMilestoneDeps(ps.drawCrossMilestoneDeps);
         setShowWeekends(ps.showWeekends);
         setShowHolidays(ps.showHolidays);
         setShowCooldown(ps.showCooldown);
@@ -187,6 +190,7 @@ export default function App() {
     const ps = loadProjectSettings(projectId);
     setNumWorkers(ps.numWorkers);
     setMode(ps.mode);
+    setDrawCrossMilestoneDeps(ps.drawCrossMilestoneDeps);
     setShowWeekends(ps.showWeekends);
     setShowHolidays(ps.showHolidays);
     setShowCooldown(ps.showCooldown);
@@ -342,9 +346,18 @@ export default function App() {
                   Timeline
                 </button>
                 <button onClick={() => setMode("tree")} style={{ ...tabButtonStyle, background: mode === "tree" ? "var(--accent)" : "var(--bg)", color: mode === "tree" ? "#fff" : "var(--text-muted)" }}>
-                  Dependency tree
+                  Tree (per milestone)
+                </button>
+                <button onClick={() => setMode("treeGlobal")} style={{ ...tabButtonStyle, background: mode === "treeGlobal" ? "var(--accent)" : "var(--bg)", color: mode === "treeGlobal" ? "#fff" : "var(--text-muted)" }}>
+                  Tree (global)
                 </button>
               </div>
+              {mode === "tree" && (
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-muted)", cursor: "pointer" }}>
+                  <input type="checkbox" checked={drawCrossMilestoneDeps} onChange={(e) => setDrawCrossMilestoneDeps(e.target.checked)} />
+                  Draw dependencies between milestones
+                </label>
+              )}
             </div>
           </>
         )}
@@ -395,7 +408,10 @@ export default function App() {
               <GanttChart schedule={schedule} showWeekends={showWeekends} showHolidays={showHolidays} showCooldown={showCooldown} setShowWeekends={setShowWeekends} setShowHolidays={setShowHolidays} setShowCooldown={setShowCooldown} />
             )}
             {!loading && !error && schedule && mode === "tree" && (
-              <DependencyTree schedule={schedule} />
+              <DependencyTree schedule={schedule} variant={drawCrossMilestoneDeps ? "split" : "individual"} />
+            )}
+            {!loading && !error && schedule && mode === "treeGlobal" && (
+              <DependencyTree schedule={schedule} variant="global" />
             )}
             {!loading && !error && !schedule && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 64, color: "var(--text-muted)" }}>Select a project to display.</div>

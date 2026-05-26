@@ -2,11 +2,13 @@
 
 const GLOBAL_STORAGE_KEY = "linear-planner";
 
-export type Mode = "workers" | "tree";
+export type Mode = "workers" | "tree" | "treeGlobal";
 
 export interface ProjectSettings {
   numWorkers: number;
   mode: Mode;
+  /** When mode === "tree", whether to draw arrows for blockers across milestones. */
+  drawCrossMilestoneDeps: boolean;
   showWeekends: boolean;
   showHolidays: boolean;
   showCooldown: boolean;
@@ -17,6 +19,7 @@ export interface ProjectSettings {
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   numWorkers: 2,
   mode: "workers",
+  drawCrossMilestoneDeps: false,
   showWeekends: false,
   showHolidays: true,
   showCooldown: true,
@@ -29,9 +32,16 @@ export function loadProjectSettings(projectId: string): ProjectSettings {
     const raw = localStorage.getItem(`${GLOBAL_STORAGE_KEY}:${projectId}`);
     if (!raw) return DEFAULT_PROJECT_SETTINGS;
     const data = JSON.parse(raw);
+    // Migration: old "treeIndividual" → "tree" with cross-milestone deps off
+    let mode: Mode = "workers";
+    let drawCrossMilestoneDeps = false;
+    if (data.mode === "tree") { mode = "tree"; drawCrossMilestoneDeps = data.drawCrossMilestoneDeps ?? true; }
+    else if (data.mode === "treeIndividual") { mode = "tree"; drawCrossMilestoneDeps = false; }
+    else if (data.mode === "treeGlobal") { mode = "treeGlobal"; }
     return {
       numWorkers: typeof data.numWorkers === "number" && data.numWorkers >= 1 ? data.numWorkers : 2,
-      mode: data.mode === "tree" ? "tree" : "workers",
+      mode,
+      drawCrossMilestoneDeps,
       showWeekends: data.showWeekends ?? false,
       showHolidays: data.showHolidays ?? true,
       showCooldown: data.showCooldown ?? true,
