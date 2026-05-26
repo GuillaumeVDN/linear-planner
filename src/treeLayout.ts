@@ -121,7 +121,8 @@ async function layoutAllMilestones(schedule: ScheduleResult): Promise<TreeLayout
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
       layoutOptions: {
-        "elk.partitioning.partition": partitionByIssue.get(issue.id)!,
+        // Zero-pad so lexical comparison agrees with numeric order even for 10+ milestones.
+        "elk.partitioning.partition": String(partitionByIssue.get(issue.id)!).padStart(4, "0"),
       },
     })),
     edges: elkEdges,
