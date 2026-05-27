@@ -152,8 +152,11 @@ export function DependencyTree({ schedule, variant = "split" }: { schedule: Sche
                 const ax2 = endPt.x - arrowSize * Math.cos(angle + 0.5);
                 const ay2 = endPt.y - arrowSize * Math.sin(angle + 0.5);
                 const active = isEdgeActive(e);
-                const opacity = hoveredId && active ? 0.9 : 0.4;
-                const stroke = hoveredId && active ? "var(--accent)" : "var(--text-muted)";
+                // Edges leaving a done card are green and faded — the dependency is satisfied.
+                const opacity = hoveredId && active ? 0.9 : e.from.issue.done ? 0.25 : 0.4;
+                const stroke = hoveredId && active
+                  ? "var(--accent)"
+                  : e.from.issue.done ? "#15803d" : "var(--text-muted)";
                 return (
                   <g key={`edge-${i}`} opacity={opacity}>
                     <path d={d} fill="none" stroke={stroke} strokeWidth={hoveredId && active ? 2 : 1.5} />
