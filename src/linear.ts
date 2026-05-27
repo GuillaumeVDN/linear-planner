@@ -254,9 +254,12 @@ export async function fetchProjectIssues(projectId: string): Promise<LinearIssue
     cursor = data.project.issues.pageInfo.endCursor;
   }
 
-  return allIssues.filter(
-    (issue) => !issue.labels.nodes.some((l) => l.name === "\u{1F680} DoD")
-  );
+  return allIssues.filter(isPlannableIssue);
+}
+
+/** Issues tagged `no-planner` are excluded from the planner entirely. */
+export function isPlannableIssue(issue: Pick<LinearIssue, "labels">): boolean {
+  return !issue.labels.nodes.some((l) => l.name === "no-planner");
 }
 
 /**
