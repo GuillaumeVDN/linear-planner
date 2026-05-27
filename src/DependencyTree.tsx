@@ -17,7 +17,12 @@ export type TreeVariant = "split" | "individual" | "global";
 export function DependencyTree({ schedule, variant = "split" }: { schedule: ScheduleResult; variant?: TreeVariant }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltipInfo, setTooltipInfo] = useState<{ issue: ScheduledIssue; x: number; y: number } | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [layout, setLayout] = useState<TreeLayoutResult>(EMPTY_LAYOUT);
+
+  // When a card is hovered, highlight the edges directly connected to it.
+  const isEdgeActive = (e: TreeLayoutResult["edges"][number]) =>
+    !hoveredId || e.from.issue.id === hoveredId || e.to.issue.id === hoveredId;
 
   const [isDragging, setIsDragging] = useState(false);
   const dragStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
@@ -146,12 +151,15 @@ export function DependencyTree({ schedule, variant = "split" }: { schedule: Sche
                 const ay1 = endPt.y - arrowSize * Math.sin(angle - 0.5);
                 const ax2 = endPt.x - arrowSize * Math.cos(angle + 0.5);
                 const ay2 = endPt.y - arrowSize * Math.sin(angle + 0.5);
+                const active = isEdgeActive(e);
+                const opacity = hoveredId && active ? 0.9 : 0.4;
+                const stroke = hoveredId && active ? "var(--accent)" : "var(--text-muted)";
                 return (
-                  <g key={`edge-${i}`} opacity={0.4}>
-                    <path d={d} fill="none" stroke="var(--text-muted)" strokeWidth={1.5} />
+                  <g key={`edge-${i}`} opacity={opacity}>
+                    <path d={d} fill="none" stroke={stroke} strokeWidth={hoveredId && active ? 2 : 1.5} />
                     <polygon
                       points={`${endPt.x},${endPt.y} ${ax1},${ay1} ${ax2},${ay2}`}
-                      fill="var(--text-muted)"
+                      fill={stroke}
                     />
                   </g>
                 );
@@ -168,8 +176,9 @@ export function DependencyTree({ schedule, variant = "split" }: { schedule: Sche
                   onMouseEnter={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
                     setTooltipInfo({ issue: node.issue, x: rect.left + rect.width / 2, y: rect.top });
+                    setHoveredId(node.issue.id);
                   }}
-                  onMouseLeave={() => setTooltipInfo(null)}
+                  onMouseLeave={() => { setTooltipInfo(null); setHoveredId(null); }}
                   onClick={() => window.open(node.issue.url, "_blank")}
                   style={{
                     position: "absolute",
@@ -182,7 +191,7 @@ export function DependencyTree({ schedule, variant = "split" }: { schedule: Sche
                       node.issue.done ? DONE_STRIPE : null,
                       ongoingStatusBg(node.issue.stateType, node.issue.done, node.issue.stateColor) ?? (!node.issue.hasEstimate ? NO_ESTIMATE_BG : "var(--surface-hover)"),
                     ].filter(Boolean).join(", "),
-                    border: "1px solid var(--border)",
+                    border: hoveredId === node.issue.id ? "1px solid var(--accent)" : "1px solid var(--border)",
                     borderRadius: 6,
                     padding: "8px 10px",
                     display: "flex",
@@ -193,7 +202,7 @@ export function DependencyTree({ schedule, variant = "split" }: { schedule: Sche
                     opacity: node.issue.done ? 0.5 : 1,
                     fontSize: 11,
                     overflow: "hidden",
-                    zIndex: 2,
+                    zIndex: hoveredId === node.issue.id ? 4 : 2,
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
