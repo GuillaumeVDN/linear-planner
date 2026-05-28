@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import type { ScheduleResult, ScheduledIssue } from "./scheduler";
 import { dayToDate, formatDate, formatParisTimeOfDay } from "./workingDays";
 import { StatusCircle } from "./StatusCircle";
@@ -14,7 +14,12 @@ const EMPTY_LAYOUT: TreeLayoutResult = { nodes: [], edges: [], bands: [], conten
 
 export type TreeVariant = "split" | "individual" | "global";
 
-export function DependencyTree({ schedule, variant = "split" }: { schedule: ScheduleResult; variant?: TreeVariant }) {
+export function DependencyTree({ schedule, variant = "split", includeDone = true }: { schedule: ScheduleResult; variant?: TreeVariant; includeDone?: boolean }) {
+  // Optionally hide done issues from the tree (cleaner forward-looking planning view).
+  const filteredSchedule = useMemo<ScheduleResult>(
+    () => (includeDone ? schedule : { ...schedule, issues: schedule.issues.filter((i) => !i.done) }),
+    [schedule, includeDone],
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltipInfo, setTooltipInfo] = useState<{ issue: ScheduledIssue; x: number; y: number } | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -53,11 +58,11 @@ export function DependencyTree({ schedule, variant = "split" }: { schedule: Sche
       : variant === "individual"
         ? layoutDependencyTreePerMilestone
         : layoutDependencyTree;
-    layoutFn(schedule).then((result) => {
+    layoutFn(filteredSchedule).then((result) => {
       if (!cancelled) setLayout(result);
     });
     return () => { cancelled = true; };
-  }, [schedule, variant]);
+  }, [filteredSchedule, variant]);
 
   const contentWidth = Math.max(layout.contentWidth, 400);
   const contentHeight = Math.max(layout.contentHeight, 100);

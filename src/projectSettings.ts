@@ -9,6 +9,8 @@ export interface ProjectSettings {
   mode: Mode;
   /** When mode === "tree", whether to draw arrows for blockers across milestones. */
   drawCrossMilestoneDeps: boolean;
+  /** Whether the tree views include done issues. Turn off to simplify forward-looking planning. */
+  includeDoneIssues: boolean;
   showWeekends: boolean;
   showHolidays: boolean;
   showCooldown: boolean;
@@ -20,6 +22,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   numWorkers: 2,
   mode: "workers",
   drawCrossMilestoneDeps: false,
+  includeDoneIssues: true,
   showWeekends: false,
   showHolidays: true,
   showCooldown: true,
@@ -42,6 +45,7 @@ export function loadProjectSettings(projectId: string): ProjectSettings {
       numWorkers: typeof data.numWorkers === "number" && data.numWorkers >= 1 ? data.numWorkers : 2,
       mode,
       drawCrossMilestoneDeps,
+      includeDoneIssues: data.includeDoneIssues ?? true,
       showWeekends: data.showWeekends ?? false,
       showHolidays: data.showHolidays ?? true,
       showCooldown: data.showCooldown ?? true,
