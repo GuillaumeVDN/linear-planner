@@ -193,6 +193,15 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
   const chartWidth = totalVisibleCols * DAY_WIDTH;
 
 
+  // First column past the latest scheduled issue's end — used to gray "no-more-work" future days.
+  const futureStartCol = useMemo(() => {
+    const lastIssueEnd = Math.max(...schedule.issues.map((i) => i.endDay), 0);
+    for (let d = lastIssueEnd; d < dayToCol.length; d++) {
+      if (dayToCol[d] >= 0) return dayToCol[d];
+    }
+    return -1;
+  }, [schedule.issues, dayToCol]);
+
   const todayCol = useMemo(() => {
     const to = schedule.todayOffset;
     if (to >= 0 && to < dayToCol.length) {
@@ -293,18 +302,30 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                   if (!cols) return null;
                   const left = cols[0] * DAY_WIDTH;
                   const width = (cols[1] - cols[0]) * DAY_WIDTH;
+                  let workingDayCount = 0;
+                  for (let d = cycle.startDay; d < cycle.endDay && d < allDays.length; d++) {
+                    const info = allDays[d];
+                    if (info && !info.isWeekend && !info.isHoliday) workingDayCount++;
+                  }
                   return (
                     <div
                       key={`cycle-${i}`}
                       style={{
                         position: "absolute", left, width, top: 0, height: CYCLE_ROW_HEIGHT,
                         background: CYCLE_COLORS[i % CYCLE_COLORS.length],
-                        display: "flex", alignItems: "center", justifyContent: "center",
+                        display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
                         fontSize: 11, fontWeight: 600, color: "var(--text)", overflow: "hidden", whiteSpace: "nowrap",
                         borderLeft: cols[0] > 0 ? "1px solid var(--border)" : "none", borderRight: "1px solid var(--border)",
                       }}
                     >
-                      {width > 50 ? cycle.label : ""}
+                      {width > 50 && (
+                        <>
+                          <span>{cycle.label}</span>
+                          <span style={{ fontStyle: "italic", fontWeight: 400, color: "var(--text-muted)" }}>
+                            ({workingDayCount} working day{workingDayCount !== 1 ? "s" : ""})
+                          </span>
+                        </>
+                      )}
                     </div>
                   );
                 })}
@@ -336,6 +357,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               <div style={{ height: DATE_ROW_HEIGHT, display: "flex" }}>
                 {visibleDays.map((h) => {
                   const isPast = todayCol >= 0 && h.col < todayCol;
+                  const isFutureEmpty = futureStartCol >= 0 && h.col >= futureStartCol;
                   return (
                   <div
                     key={h.day}
@@ -346,7 +368,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                       color: h.isGrayed || isPast ? "var(--text-muted)" : "var(--text)",
                       opacity: h.isGrayed ? 0.5 : isPast ? 0.6 : 1,
                       borderLeft: h.col === todayCol ? "1px solid rgba(239, 68, 68, 0.6)" : (h.col > 0 && (h.isCycleStart || h.isCycleEnd)) ? "2px solid var(--border)" : h.isMonday ? "1px solid var(--border)" : "none",
-                      background: h.col === todayCol ? "rgba(128,128,128,0.06)" : isPast ? "rgba(128,128,128,0.08)" : undefined,
+                      background: h.col === todayCol ? "rgba(128,128,128,0.06)" : (isPast || isFutureEmpty) ? "rgba(128,128,128,0.08)" : undefined,
                     }}
                   >
                     <span>{h.date.toLocaleDateString("en-US", { weekday: "short" })}</span>
@@ -381,6 +403,10 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               {/* Past overlay */}
               {todayCol > 0 && (
                 <div style={{ position: "absolute", left: 0, top: 0, width: todayCol * DAY_WIDTH, height: "100%", background: "rgba(128,128,128,0.15)", pointerEvents: "none", zIndex: 1 }} />
+              )}
+              {/* Empty-future overlay (days past the latest scheduled issue) */}
+              {futureStartCol >= 0 && futureStartCol < visibleDays.length && (
+                <div style={{ position: "absolute", left: futureStartCol * DAY_WIDTH, top: 0, width: (visibleDays.length - futureStartCol) * DAY_WIDTH, height: "100%", background: "rgba(128,128,128,0.15)", pointerEvents: "none", zIndex: 1 }} />
               )}
               {/* Today highlight */}
               {todayCol >= 0 && (

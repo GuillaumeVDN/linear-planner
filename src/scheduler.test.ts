@@ -776,4 +776,74 @@ describe("scheduleIssues", () => {
     });
   });
 
+  describe("virtual cycle extension", () => {
+    // Cycle definitions whose display names start at "Cycle 33" but Linear's per-team `number`
+    // field is just 1/2/3/4 — mirrors the multi-team scenario seen in production.
+    const CYCLES = [
+      { id: "c1", name: "Cycle 33", number: 1, startsAt: isoDate(MONDAY), endsAt: isoDate(addDays(MONDAY, 10)) },
+      { id: "c2", name: "Cycle 34", number: 2, startsAt: isoDate(addDays(MONDAY, 14)), endsAt: isoDate(addDays(MONDAY, 24)) },
+      { id: "c3", name: "Cycle 35", number: 3, startsAt: isoDate(addDays(MONDAY, 28)), endsAt: isoDate(addDays(MONDAY, 38)) },
+      { id: "c4", name: "Cycle 36", number: 4, startsAt: isoDate(addDays(MONDAY, 42)), endsAt: isoDate(addDays(MONDAY, 52)) },
+    ];
+
+    // An issue with a huge estimate so it spills past the last real cycle.
+    function bigIssue() {
+      return makeIssue({ id: "x", identifier: "X-1", estimate: 80 });
+    }
+
+    it("extends labels by parsing trailing digits in the cycle name (Cycle 36 → Cycle 37)", () => {
+      const result = scheduleIssues([bigIssue()], 1, MONDAY, CYCLES, [], WORKFLOW_STATES);
+      // Real cycles are present.
+      const labels = result.cycles.map((c) => c.label);
+      expect(labels.slice(0, 4)).toEqual(["Cycle 33", "Cycle 34", "Cycle 35", "Cycle 36"]);
+      // Virtual cycles continue numerically from the parsed name suffix.
+      expect(labels[4]).toBe("Cycle 37");
+      expect(labels[5]).toBe("Cycle 38");
+    });
+
+    it("does not reuse Linear's internal `number` field for the virtual sequence", () => {
+      const result = scheduleIssues([bigIssue()], 1, MONDAY, CYCLES, [], WORKFLOW_STATES);
+      // If Linear's internal number (4) were used as the base, the next virtual would be "Cycle 5".
+      expect(result.cycles.map((c) => c.label)).not.toContain("Cycle 5");
+    });
+
+    it("preserves cycle duration and cooldown for virtual cycles", () => {
+      const result = scheduleIssues([bigIssue()], 1, MONDAY, CYCLES, [], WORKFLOW_STATES);
+      const cycle36 = result.cycles.find((c) => c.label === "Cycle 36")!;
+      const cycle37 = result.cycles.find((c) => c.label === "Cycle 37")!;
+      const cycle38 = result.cycles.find((c) => c.label === "Cycle 38")!;
+      // Cycle 36 spans 10 days; the cooldown gap between real cycles is 4 days. Virtuals match.
+      expect(cycle36.endDay - cycle36.startDay).toBe(10);
+      expect(cycle37.endDay - cycle37.startDay).toBe(10);
+      expect(cycle37.startDay - cycle36.endDay).toBe(4);
+      expect(cycle38.startDay - cycle37.endDay).toBe(4);
+    });
+
+    // The next two tests use *done* issues so endDay is anchored to completedAt (deterministic)
+    // rather than the unstarted-scheduling path which depends on wall-clock "today".
+    function doneIssue(id: string, completedDayOffset: number) {
+      return makeIssue({
+        id, identifier: id.toUpperCase(),
+        estimate: 2,
+        startedAt: isoDate(MONDAY),
+        completedAt: isoDate(addDays(MONDAY, completedDayOffset)),
+        state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+      });
+    }
+
+    it("does not add virtual cycles when no issue extends past the last real one", () => {
+      const result = scheduleIssues([doneIssue("d1", 2)], 1, MONDAY, CYCLES, [], WORKFLOW_STATES);
+      expect(result.cycles.map((c) => c.label)).toEqual(["Cycle 33", "Cycle 34", "Cycle 35", "Cycle 36"]);
+    });
+
+    it("stops appending virtual cycles once the last issue is covered", () => {
+      // Cycle 36 ends day 52; the first virtual cycle (Cycle 37) spans days 56–66.
+      // A done issue ending at day 60 lands inside Cycle 37 — Cycle 38 should NOT be appended.
+      const result = scheduleIssues([doneIssue("d1", 60)], 1, MONDAY, CYCLES, [], WORKFLOW_STATES);
+      const labels = result.cycles.map((c) => c.label);
+      expect(labels).toContain("Cycle 37");
+      expect(labels).not.toContain("Cycle 38");
+    });
+  });
+
 });

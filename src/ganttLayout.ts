@@ -8,11 +8,13 @@ export const HEADER_HEIGHT = CYCLE_ROW_HEIGHT + DATE_ROW_HEIGHT;
 export const DAY_WIDTH = 40;
 export const LABEL_WIDTH = 220;
 
+// Picked from widely-spaced hue buckets so adjacent cycles never look alike,
+// even when cooldown bands between them are hidden.
 export const CYCLE_COLORS = [
-  "rgba(99, 102, 241, 0.15)",
-  "rgba(168, 85, 247, 0.15)",
-  "rgba(14, 165, 233, 0.15)",
-  "rgba(20, 184, 166, 0.15)",
+  "rgba(59, 130, 246, 0.18)",   // blue
+  "rgba(249, 115, 22, 0.18)",   // orange
+  "rgba(34, 197, 94, 0.18)",    // green
+  "rgba(217, 70, 239, 0.18)",   // fuchsia
 ];
 
 export interface DayInfo {

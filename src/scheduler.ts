@@ -193,16 +193,60 @@ function buildSchedulableDays(
   };
 }
 
+/**
+ * Append virtual cycles past the last real one (same duration & cooldown as the last real pair),
+ * so the scheduler can place issues beyond the configured cycles while still honoring cooldown gaps.
+ */
+function extendCyclesWithVirtual(linearCycles: LinearCycle[]): { cycles: LinearCycle[]; realIds: Set<string> } {
+  const realIds = new Set(linearCycles.map((c) => c.id));
+  if (linearCycles.length === 0) return { cycles: linearCycles, realIds };
+  // Chronologically-last cycle defines duration and cooldown gap.
+  const sorted = [...linearCycles].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+  const last = sorted[sorted.length - 1];
+  const secondLast = sorted.length >= 2 ? sorted[sorted.length - 2] : null;
+  const cycleMs = new Date(last.endsAt).getTime() - new Date(last.startsAt).getTime();
+  const cooldownMs = secondLast
+    ? Math.max(0, new Date(last.startsAt).getTime() - new Date(secondLast.endsAt).getTime())
+    : 0;
+  // Linear's `number` field is the cycle's internal per-team index (1/2/3/4) — NOT the visible
+  // "Cycle 36" suffix in the name. So derive the displayed number from the name's trailing digits.
+  function labelNumberOf(c: LinearCycle): number {
+    const label = c.name ?? `Cycle ${c.number}`;
+    const m = label.match(/(\d+)\s*$/);
+    return m ? parseInt(m[1], 10) : c.number;
+  }
+  const byLabelNumber = [...linearCycles].sort((a, b) => labelNumberOf(b) - labelNumberOf(a));
+  const numberRef = byLabelNumber[0];
+  const baseNumber = labelNumberOf(numberRef);
+  const refLabel = numberRef.name ?? `Cycle ${numberRef.number}`;
+  const labelMatch = refLabel.match(/^(.*?)(\d+)\s*$/);
+  const prefix = labelMatch ? labelMatch[1] : "Cycle ";
+  const virtuals: LinearCycle[] = [];
+  let nextStartMs = new Date(last.endsAt).getTime() + cooldownMs;
+  for (let i = 1; i <= 100; i++) {
+    virtuals.push({
+      id: `virtual-${last.id}-${i}`,
+      name: `${prefix}${baseNumber + i}`,
+      number: baseNumber + i,
+      startsAt: new Date(nextStartMs).toISOString(),
+      endsAt: new Date(nextStartMs + cycleMs).toISOString(),
+    });
+    nextStartMs += cycleMs + cooldownMs;
+  }
+  return { cycles: [...linearCycles, ...virtuals], realIds };
+}
+
 export function scheduleIssues(
   issues: LinearIssue[],
   numWorkers: number,
   startDate: Date,
-  linearCycles: LinearCycle[] = [],
+  linearCyclesInput: LinearCycle[] = [],
   projectMilestones: LinearMilestone[] = [],
   workflowStates: LinearWorkflowState[] = [],
   endStatusName: string = "",
   doneEndDates: Map<string, string> = new Map(),
 ): ScheduleResult {
+  const { cycles: linearCycles, realIds: realCycleIds } = extendCyclesWithVirtual(linearCyclesInput);
   const cal = buildWorkingDayCalendar(startDate, 730);
   const sched = buildSchedulableDays(cal, linearCycles, startDate);
   const issueMap = new Map(issues.map((i) => [i.id, i]));
@@ -591,13 +635,21 @@ export function scheduleIssues(
   const iterations = Array.from(milestoneEndDays.values()).sort((a, b) => a.endDay - b.endDay);
   if (iterations.length > 0) iterations.pop();
 
-  const cycles: CyclePeriod[] = linearCycles
-    .map((c) => {
-      const cStart = new Date(c.startsAt); cStart.setHours(0, 0, 0, 0);
-      const cEnd = new Date(c.endsAt); cEnd.setHours(0, 0, 0, 0);
-      return { label: c.name || `Cycle ${c.number}`, startDay: dateToCalendarOffset(cStart, startDate), endDay: dateToCalendarOffset(cEnd, startDate) };
-    })
-    .filter((c) => c.endDay > 0);
+  // Build display cycles from real + virtual cycles. Trim trailing virtual cycles
+  // that aren't needed (i.e. start after the latest scheduled issue).
+  const maxIssueEnd = Math.max(...allIssues.map((s) => s.endDay), 0);
+  const cycles: CyclePeriod[] = [];
+  for (const c of linearCycles) {
+    const cStart = new Date(c.startsAt); cStart.setHours(0, 0, 0, 0);
+    const cEnd = new Date(c.endsAt); cEnd.setHours(0, 0, 0, 0);
+    const startDay = dateToCalendarOffset(cStart, startDate);
+    const endDay = dateToCalendarOffset(cEnd, startDate);
+    if (endDay <= 0) continue;
+    const isReal = realCycleIds.has(c.id);
+    if (!isReal && startDay > maxIssueEnd) break; // stop once virtual cycles are no longer needed
+    cycles.push({ label: c.name || `Cycle ${c.number}`, startDay, endDay });
+  }
+
   for (const c of cycles) totalDays = Math.max(totalDays, c.endDay);
 
   const milestones: MilestoneInfo[] = [...projectMilestones].sort((a, b) => a.sortOrder - b.sortOrder);
