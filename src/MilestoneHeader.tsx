@@ -85,7 +85,6 @@ export function buildMilestoneSummary(
 
   if (startedIssues.length > 0) {
     const doneIssues = estimatedIssues.filter((i) => i.done);
-    const doneEstimateTotal = doneIssues.reduce((s, i) => s + i.estimate, 0);
     // Theoretical schedule: how long the done issues WOULD take if scheduled cleanly
     // with W workers respecting dependencies (and ignoring their real Linear dates).
     // Compared against actual wall-clock elapsed, this rewards extra parallelism

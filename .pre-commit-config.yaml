@@ -7,3 +7,9 @@ repos:
         language: system
         types_or: [ts, tsx]
         pass_filenames: false
+      - id: build
+        name: Production build (tsc -b + vite build)
+        entry: npm run build
+        language: system
+        types_or: [ts, tsx]
+        pass_filenames: false
