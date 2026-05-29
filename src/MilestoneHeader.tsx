@@ -1,6 +1,34 @@
 import { type CSSProperties } from "react";
-import type { ScheduledIssue } from "./scheduler";
-import { dayToDate, formatDate } from "./workingDays";
+import type { ScheduledIssue, CyclePeriod } from "./scheduler";
+import { dayToDate, formatDate, isNonWorkingDay } from "./workingDays";
+import { theoreticalSchedule } from "./theoreticalSchedule";
+
+/**
+ * Count *schedulable* days in [startCalDay, endCalDay): working days that are also
+ * inside one of the configured cycles. Days falling in inter-cycle cooldown gaps
+ * are excluded, matching what the scheduler treats as "non-schedulable".
+ * If no cycles are configured, all working days are schedulable.
+ */
+function schedulableDaysBetween(
+  startCalDay: number,
+  endCalDay: number,
+  chartStart: Date,
+  cycles: CyclePeriod[],
+): number {
+  if (endCalDay <= startCalDay) return 0;
+  const lastCycleEnd = cycles.length > 0 ? Math.max(...cycles.map((c) => c.endDay)) : -Infinity;
+  let count = 0;
+  for (let d = startCalDay; d < endCalDay; d++) {
+    if (isNonWorkingDay(dayToDate(chartStart, d))) continue;
+    if (cycles.length > 0 && d < lastCycleEnd) {
+      // Inside the known-cycle range: only count days that fall within some cycle.
+      const inCycle = cycles.some((c) => d >= c.startDay && d < c.endDay);
+      if (!inCycle) continue;
+    }
+    count++;
+  }
+  return count;
+}
 
 export interface MilestoneSummaryData {
   issueCount: string;
@@ -19,7 +47,12 @@ export interface MilestoneSummaryData {
   ongoingColor: string | null;
 }
 
-export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Date, numWorkers: number = 1): MilestoneSummaryData {
+export function buildMilestoneSummary(
+  msIssues: ScheduledIssue[],
+  startDate: Date,
+  numWorkers: number = 1,
+  cycles: CyclePeriod[] = [],
+): MilestoneSummaryData {
   const count = msIssues.length;
   const empty: MilestoneSummaryData = { issueCount: `${count} issue${count !== 1 ? "s" : ""}`, totalDays: null, startedAt: null, targetDays: "", targetEnd: "", soFarLabel: null, soFarCount: null, soFarDays: null, soFarStatus: null, soFarColor: null, ongoingLabel: null, ongoingCount: null, ongoingStatus: null, ongoingColor: null };
   if (count === 0) return { ...empty, issueCount: "0 issues" };
@@ -53,13 +86,31 @@ export function buildMilestoneSummary(msIssues: ScheduledIssue[], startDate: Dat
   if (startedIssues.length > 0) {
     const doneIssues = estimatedIssues.filter((i) => i.done);
     const doneEstimateTotal = doneIssues.reduce((s, i) => s + i.estimate, 0);
-    const totalDaysSpent = doneIssues.reduce((s, i) => s + (i.daysSpent ?? 0), 0);
-    const estimatedPerWorker = doneEstimateTotal / w;
-    const spentPerWorker = totalDaysSpent / w;
-    const fmtSpent = spentPerWorker % 1 === 0 ? `${spentPerWorker}` : spentPerWorker.toFixed(1);
+    // Theoretical schedule: how long the done issues WOULD take if scheduled cleanly
+    // with W workers respecting dependencies (and ignoring their real Linear dates).
+    // Compared against actual wall-clock elapsed, this rewards extra parallelism
+    // and accounts for dependency chains that constrain achievable wall-clock.
+    let theoreticalElapsed = 0;
+    let actualElapsed = 0;
+    if (doneIssues.length > 0) {
+      const doneIdByIdentifier = new Map(doneIssues.map((i) => [i.identifier, i.id]));
+      const theoreticalInput = doneIssues.map((i) => ({
+        id: i.id,
+        estimate: i.estimate,
+        blockedBy: i.blockedBy
+          .map((b) => doneIdByIdentifier.get(b.identifier))
+          .filter((id): id is string => !!id),
+      }));
+      theoreticalElapsed = theoreticalSchedule(theoreticalInput, w);
+      const minStart = Math.min(...doneIssues.map((i) => i.startDay));
+      const maxEnd = Math.max(...doneIssues.map((i) => i.endDay));
+      actualElapsed = schedulableDaysBetween(minStart, maxEnd, startDate, cycles);
+    }
+    const fmtActual = actualElapsed % 1 === 0 ? `${actualElapsed}` : actualElapsed.toFixed(1);
+    const fmtTheoretical = theoreticalElapsed % 1 === 0 ? `${theoreticalElapsed}` : theoreticalElapsed.toFixed(1);
     soFarLabel = "Completed";
-    soFarCount = `${doneIssues.length} issue${doneIssues.length !== 1 ? "s" : ""} · ${fmtSpent} / ~${fmtDays(doneEstimateTotal)} working days`;
-    const diff = spentPerWorker - estimatedPerWorker;
+    soFarCount = `${doneIssues.length} issue${doneIssues.length !== 1 ? "s" : ""} · ${fmtActual} / ~${fmtTheoretical} working days`;
+    const diff = actualElapsed - theoreticalElapsed;
     const fmtAbsDiff = Math.abs(diff) % 1 === 0 ? `${Math.abs(diff)}` : Math.abs(diff).toFixed(1);
     if (diff > 0) {
       soFarColor = "#f97316";

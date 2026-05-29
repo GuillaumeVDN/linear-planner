@@ -78,12 +78,12 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
     for (const ms of schedule.milestones) {
       const msIssues = schedule.issues.filter((i) => i.milestone?.id === ms.id);
       if (msIssues.length === 0) continue;
-      groups.push({ milestoneId: ms.id, milestoneName: ms.name, workerRows: buildWorkerRows(msIssues), summary: buildMilestoneSummary(msIssues, schedule.startDate, schedule.usedWorkers) });
+      groups.push({ milestoneId: ms.id, milestoneName: ms.name, workerRows: buildWorkerRows(msIssues), summary: buildMilestoneSummary(msIssues, schedule.startDate, schedule.usedWorkers, schedule.cycles) });
     }
 
     const noMsIssues = schedule.issues.filter((i) => !i.milestone);
     if (noMsIssues.length > 0) {
-      groups.push({ milestoneId: null, milestoneName: "No milestone", workerRows: buildWorkerRows(noMsIssues), summary: buildMilestoneSummary(noMsIssues, schedule.startDate, schedule.usedWorkers) });
+      groups.push({ milestoneId: null, milestoneName: "No milestone", workerRows: buildWorkerRows(noMsIssues), summary: buildMilestoneSummary(noMsIssues, schedule.startDate, schedule.usedWorkers, schedule.cycles) });
     }
 
     return groups;
