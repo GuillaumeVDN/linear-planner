@@ -320,7 +320,9 @@ export function scheduleIssues(
         const startedDate = new Date(issue.startedAt);
         startedDate.setHours(0, 0, 0, 0);
         const startedWd = cal.toWorkingDay(dateToCalendarOffset(startedDate, startDate));
-        daysSpent = Math.max(0.5, sched.countSchedulable(startedWd, todayWd) + halfDayAdjustment(issue.startedAt, null));
+        // Treat "now" as the end-of-period for half-day accounting: if it's still morning,
+        // today only counts as half a working day.
+        daysSpent = Math.max(0.5, sched.countSchedulable(startedWd, todayWd) + halfDayAdjustment(issue.startedAt, new Date().toISOString()));
       }
     }
     const isLate = !isDone(issue) && issue.startedAt != null && daysSpent != null && hasEstimate && daysSpent > estimate;

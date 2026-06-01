@@ -70,8 +70,11 @@ export function AssigneeAvatar({ url, name, size = 16 }: { url: string | null; n
   );
 }
 
-/** Colored duration label: green = done within estimate, orange = exceeded, yellow = in progress */
-export function DurationBadge({ issue, style }: { issue: ScheduledIssue; style?: CSSProperties }) {
+/**
+ * Colored duration label: green = done within estimate, orange = exceeded, yellow = in progress.
+ * `alwaysShowComparison` keeps the `spent/estimate` form even when they match — useful in tooltips.
+ */
+export function DurationBadge({ issue, style, alwaysShowComparison = false }: { issue: ScheduledIssue; style?: CSSProperties; alwaysShowComparison?: boolean }) {
   const spent = issue.daysSpent;
   const hasSpent = issue.hasEstimate && spent != null;
   if (!hasSpent) {
@@ -85,6 +88,9 @@ export function DurationBadge({ issue, style }: { issue: ScheduledIssue; style?:
   if (spent !== issue.estimate) {
     const color = spent > issue.estimate ? "#f97316" : "#eab308";
     return <span style={{ ...style, color, fontWeight: 600 }}>{spent}/{issue.estimate} working days</span>;
+  }
+  if (alwaysShowComparison) {
+    return <span style={{ ...style, color: "#15803d", fontWeight: 600 }}>{spent}/{issue.estimate} working days</span>;
   }
   return <span style={style}>{issue.estimate} working day{issue.estimate > 1 ? "s" : ""}</span>;
 }
