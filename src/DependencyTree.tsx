@@ -204,7 +204,7 @@ export function DependencyTree({ schedule, variant = "split", includeDone = true
                     padding: "8px 10px",
                     display: "flex",
                     flexDirection: "column",
-                    justifyContent: "center",
+                    justifyContent: "flex-start",
                     gap: 4,
                     cursor: "pointer",
                     opacity: node.issue.done ? 0.5 : 1,
@@ -226,6 +226,11 @@ export function DependencyTree({ schedule, variant = "split", includeDone = true
                       {node.issue.identifier}
                     </span>
                     <DurationBadge issue={node.issue} style={{ fontSize: 10, color: "var(--text-muted)" }} />
+                    {node.issue.priority > 0 && (
+                      <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center" }} title={node.issue.priorityLabel}>
+                        <PriorityIcon priority={node.issue.priority} size={12} />
+                      </span>
+                    )}
                   </div>
                   <div
                     title={node.issue.title}
