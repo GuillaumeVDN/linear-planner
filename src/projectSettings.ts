@@ -9,8 +9,10 @@ export interface ProjectSettings {
   mode: Mode;
   /** When mode === "tree", whether to draw arrows for blockers across milestones. */
   drawCrossMilestoneDeps: boolean;
-  /** Whether the tree views include done issues. Turn off to simplify forward-looking planning. */
-  includeDoneIssues: boolean;
+  /** Whether the per-milestone tree view includes done issues. */
+  includeDoneIssuesTree: boolean;
+  /** Whether the global tree view includes done issues. */
+  includeDoneIssuesTreeGlobal: boolean;
   showWeekends: boolean;
   showHolidays: boolean;
   showCooldown: boolean;
@@ -22,7 +24,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   numWorkers: 2,
   mode: "workers",
   drawCrossMilestoneDeps: false,
-  includeDoneIssues: true,
+  includeDoneIssuesTree: true,
+  includeDoneIssuesTreeGlobal: true,
   showWeekends: false,
   showHolidays: true,
   showCooldown: true,
@@ -41,11 +44,14 @@ export function loadProjectSettings(projectId: string): ProjectSettings {
     if (data.mode === "tree") { mode = "tree"; drawCrossMilestoneDeps = data.drawCrossMilestoneDeps ?? true; }
     else if (data.mode === "treeIndividual") { mode = "tree"; drawCrossMilestoneDeps = false; }
     else if (data.mode === "treeGlobal") { mode = "treeGlobal"; }
+    // Migration: a single `includeDoneIssues` value (older shape) is copied to both per-view flags.
+    const legacyIncludeDone = data.includeDoneIssues;
     return {
       numWorkers: typeof data.numWorkers === "number" && data.numWorkers >= 1 ? data.numWorkers : 2,
       mode,
       drawCrossMilestoneDeps,
-      includeDoneIssues: data.includeDoneIssues ?? true,
+      includeDoneIssuesTree: data.includeDoneIssuesTree ?? legacyIncludeDone ?? true,
+      includeDoneIssuesTreeGlobal: data.includeDoneIssuesTreeGlobal ?? legacyIncludeDone ?? true,
       showWeekends: data.showWeekends ?? false,
       showHolidays: data.showHolidays ?? true,
       showCooldown: data.showCooldown ?? true,

@@ -83,28 +83,24 @@ export function buildMilestoneSummary(
   let soFarStatus: string | null = null;
   let soFarColor: string | null = null;
 
-  if (startedIssues.length > 0) {
-    const doneIssues = estimatedIssues.filter((i) => i.done);
+  const doneIssues = estimatedIssues.filter((i) => i.done);
+  if (startedIssues.length > 0 && doneIssues.length > 0) {
     // Theoretical schedule: how long the done issues WOULD take if scheduled cleanly
     // with W workers respecting dependencies (and ignoring their real Linear dates).
     // Compared against actual wall-clock elapsed, this rewards extra parallelism
     // and accounts for dependency chains that constrain achievable wall-clock.
-    let theoreticalElapsed = 0;
-    let actualElapsed = 0;
-    if (doneIssues.length > 0) {
-      const doneIdByIdentifier = new Map(doneIssues.map((i) => [i.identifier, i.id]));
-      const theoreticalInput = doneIssues.map((i) => ({
-        id: i.id,
-        estimate: i.estimate,
-        blockedBy: i.blockedBy
-          .map((b) => doneIdByIdentifier.get(b.identifier))
-          .filter((id): id is string => !!id),
-      }));
-      theoreticalElapsed = theoreticalSchedule(theoreticalInput, w);
-      const minStart = Math.min(...doneIssues.map((i) => i.startDay));
-      const maxEnd = Math.max(...doneIssues.map((i) => i.endDay));
-      actualElapsed = schedulableDaysBetween(minStart, maxEnd, startDate, cycles);
-    }
+    const doneIdByIdentifier = new Map(doneIssues.map((i) => [i.identifier, i.id]));
+    const theoreticalInput = doneIssues.map((i) => ({
+      id: i.id,
+      estimate: i.estimate,
+      blockedBy: i.blockedBy
+        .map((b) => doneIdByIdentifier.get(b.identifier))
+        .filter((id): id is string => !!id),
+    }));
+    const theoreticalElapsed = theoreticalSchedule(theoreticalInput, w);
+    const minStart = Math.min(...doneIssues.map((i) => i.startDay));
+    const maxEnd = Math.max(...doneIssues.map((i) => i.endDay));
+    const actualElapsed = schedulableDaysBetween(minStart, maxEnd, startDate, cycles);
     const fmtActual = actualElapsed % 1 === 0 ? `${actualElapsed}` : actualElapsed.toFixed(1);
     const fmtTheoretical = theoreticalElapsed % 1 === 0 ? `${theoreticalElapsed}` : theoreticalElapsed.toFixed(1);
     soFarLabel = "Completed";

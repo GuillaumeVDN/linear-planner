@@ -22,7 +22,8 @@ export default function App() {
   const [showHolidays, setShowHolidays] = useState(true);
   const [showCooldown, setShowCooldown] = useState(true);
   const [drawCrossMilestoneDeps, setDrawCrossMilestoneDeps] = useState(false);
-  const [includeDoneIssues, setIncludeDoneIssues] = useState(true);
+  const [includeDoneIssuesTree, setIncludeDoneIssuesTree] = useState(true);
+  const [includeDoneIssuesTreeGlobal, setIncludeDoneIssuesTreeGlobal] = useState(true);
   const [startStatusName, setStartStatusName] = useState("");
   const [endStatusName, setEndStatusName] = useState("");
   const [doneEndDates, setDoneEndDates] = useState<Map<string, string>>(new Map());
@@ -138,7 +139,8 @@ export default function App() {
           setNumWorkers(ps.numWorkers);
           setMode(ps.mode);
           setDrawCrossMilestoneDeps(ps.drawCrossMilestoneDeps);
-          setIncludeDoneIssues(ps.includeDoneIssues);
+          setIncludeDoneIssuesTree(ps.includeDoneIssuesTree);
+          setIncludeDoneIssuesTreeGlobal(ps.includeDoneIssuesTreeGlobal);
           setShowWeekends(ps.showWeekends);
           setShowHolidays(ps.showHolidays);
           setShowCooldown(ps.showCooldown);
@@ -158,9 +160,9 @@ export default function App() {
 
   useEffect(() => {
     if (connected && selectedProjectId) {
-      saveProjectSettings(selectedProjectId, { numWorkers, mode, drawCrossMilestoneDeps, includeDoneIssues, showWeekends, showHolidays, showCooldown, startStatusName, endStatusName });
+      saveProjectSettings(selectedProjectId, { numWorkers, mode, drawCrossMilestoneDeps, includeDoneIssuesTree, includeDoneIssuesTreeGlobal, showWeekends, showHolidays, showCooldown, startStatusName, endStatusName });
     }
-  }, [connected, selectedProjectId, numWorkers, mode, drawCrossMilestoneDeps, includeDoneIssues, showWeekends, showHolidays, showCooldown, startStatusName, endStatusName]);
+  }, [connected, selectedProjectId, numWorkers, mode, drawCrossMilestoneDeps, includeDoneIssuesTree, includeDoneIssuesTreeGlobal, showWeekends, showHolidays, showCooldown, startStatusName, endStatusName]);
 
   useEffect(() => {
     if (connected && selectedProjectId) {
@@ -176,7 +178,8 @@ export default function App() {
         setNumWorkers(ps.numWorkers);
         setMode(ps.mode);
         setDrawCrossMilestoneDeps(ps.drawCrossMilestoneDeps);
-        setIncludeDoneIssues(ps.includeDoneIssues);
+        setIncludeDoneIssuesTree(ps.includeDoneIssuesTree);
+        setIncludeDoneIssuesTreeGlobal(ps.includeDoneIssuesTreeGlobal);
         setShowWeekends(ps.showWeekends);
         setShowHolidays(ps.showHolidays);
         setShowCooldown(ps.showCooldown);
@@ -194,7 +197,8 @@ export default function App() {
     setNumWorkers(ps.numWorkers);
     setMode(ps.mode);
     setDrawCrossMilestoneDeps(ps.drawCrossMilestoneDeps);
-    setIncludeDoneIssues(ps.includeDoneIssues);
+    setIncludeDoneIssuesTree(ps.includeDoneIssuesTree);
+    setIncludeDoneIssuesTreeGlobal(ps.includeDoneIssuesTreeGlobal);
     setShowWeekends(ps.showWeekends);
     setShowHolidays(ps.showHolidays);
     setShowCooldown(ps.showCooldown);
@@ -356,16 +360,23 @@ export default function App() {
                   Tree (global)
                 </button>
               </div>
+              {(mode === "tree" || mode === "treeGlobal") && (
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-muted)", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={mode === "tree" ? includeDoneIssuesTree : includeDoneIssuesTreeGlobal}
+                    onChange={(e) => {
+                      if (mode === "tree") setIncludeDoneIssuesTree(e.target.checked);
+                      else setIncludeDoneIssuesTreeGlobal(e.target.checked);
+                    }}
+                  />
+                  Include done issues
+                </label>
+              )}
               {mode === "tree" && (
                 <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-muted)", cursor: "pointer" }}>
                   <input type="checkbox" checked={drawCrossMilestoneDeps} onChange={(e) => setDrawCrossMilestoneDeps(e.target.checked)} />
                   Draw dependencies between milestones
-                </label>
-              )}
-              {(mode === "tree" || mode === "treeGlobal") && (
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-muted)", cursor: "pointer" }}>
-                  <input type="checkbox" checked={includeDoneIssues} onChange={(e) => setIncludeDoneIssues(e.target.checked)} />
-                  Include done issues
                 </label>
               )}
             </div>
@@ -418,10 +429,10 @@ export default function App() {
               <GanttChart schedule={schedule} showWeekends={showWeekends} showHolidays={showHolidays} showCooldown={showCooldown} setShowWeekends={setShowWeekends} setShowHolidays={setShowHolidays} setShowCooldown={setShowCooldown} />
             )}
             {!loading && !error && schedule && mode === "tree" && (
-              <DependencyTree schedule={schedule} variant={drawCrossMilestoneDeps ? "split" : "individual"} includeDone={includeDoneIssues} />
+              <DependencyTree schedule={schedule} variant={drawCrossMilestoneDeps ? "split" : "individual"} includeDone={includeDoneIssuesTree} />
             )}
             {!loading && !error && schedule && mode === "treeGlobal" && (
-              <DependencyTree schedule={schedule} variant="global" includeDone={includeDoneIssues} />
+              <DependencyTree schedule={schedule} variant="global" includeDone={includeDoneIssuesTreeGlobal} />
             )}
             {!loading && !error && !schedule && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 64, color: "var(--text-muted)" }}>Select a project to display.</div>
