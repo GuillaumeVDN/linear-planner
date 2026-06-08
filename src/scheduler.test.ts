@@ -472,6 +472,39 @@ describe("scheduleIssues", () => {
       expect(a.daysSpent).toBeNull();
     });
 
+    it("issues currently in a started state below the configured start status are not counted as in-progress", () => {
+      // startStatusName = "In Review" (position 3). An issue currently in "In Progress"
+      // (position 2, started type but below the configured start) should NOT accrue daysSpent.
+      const issues = [
+        makeIssue({
+          id: "a", identifier: "A-1", estimate: 3,
+          startedAt: isoDate(MONDAY),
+          state: { name: "In Progress", type: "started", color: "#36f", position: 2 },
+        }),
+        makeIssue({
+          id: "b", identifier: "A-2", estimate: 3,
+          startedAt: isoDate(MONDAY),
+          state: { name: "In Review", type: "started", color: "#f90", position: 3 },
+        }),
+      ];
+      const result = scheduleIssues(issues, 1, MONDAY, [], [], WORKFLOW_STATES, "", new Map(), "In Review");
+      expect(findIssue(result, "A-1")!.daysSpent).toBeNull(); // below start → not in-progress
+      expect(findIssue(result, "A-2")!.daysSpent).not.toBeNull(); // at start → counted
+    });
+
+    it("default start status (lowest started position) keeps legacy behaviour: every started issue counts", () => {
+      const issues = [
+        makeIssue({
+          id: "a", identifier: "A-1", estimate: 3,
+          startedAt: isoDate(MONDAY),
+          state: { name: "In Progress", type: "started", color: "#36f", position: 2 },
+        }),
+      ];
+      // No startStatusName → defaults to lowest started ("In Progress"), so A-1 counts.
+      const result = scheduleIssues(issues, 1, MONDAY, [], [], WORKFLOW_STATES);
+      expect(findIssue(result, "A-1")!.daysSpent).not.toBeNull();
+    });
+
     it("late in-progress issues extend to today and are marked isLate", () => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);

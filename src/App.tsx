@@ -67,16 +67,16 @@ export default function App() {
 
   const maxParallelism = useMemo(() => {
     if (projectIssues.length === 0) return 1;
-    const unlimited = scheduleIssues(projectIssues, projectIssues.length, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates);
+    const unlimited = scheduleIssues(projectIssues, projectIssues.length, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates, effectiveStartStatus);
     return unlimited.usedWorkers;
-  }, [projectIssues, projectCycles, projectMilestones, workflowStates, chartStart, effectiveEndStatus, doneEndDates]);
+  }, [projectIssues, projectCycles, projectMilestones, workflowStates, chartStart, effectiveEndStatus, doneEndDates, effectiveStartStatus]);
 
   const effectiveWorkers = Math.min(numWorkers, maxParallelism);
 
   const schedule: ScheduleResult | null = useMemo(() => {
     if (projectIssues.length === 0) return null;
-    return scheduleIssues(projectIssues, effectiveWorkers, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates);
-  }, [projectIssues, projectCycles, projectMilestones, workflowStates, effectiveWorkers, chartStart, effectiveEndStatus, doneEndDates]);
+    return scheduleIssues(projectIssues, effectiveWorkers, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates, effectiveStartStatus);
+  }, [projectIssues, projectCycles, projectMilestones, workflowStates, effectiveWorkers, chartStart, effectiveEndStatus, doneEndDates, effectiveStartStatus]);
 
   // Restore session on mount (or handle OAuth callback)
   useEffect(() => {

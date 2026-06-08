@@ -245,6 +245,7 @@ export function scheduleIssues(
   workflowStates: LinearWorkflowState[] = [],
   endStatusName: string = "",
   doneEndDates: Map<string, string> = new Map(),
+  startStatusName: string = "",
 ): ScheduleResult {
   const { cycles: linearCycles, realIds: realCycleIds } = extendCyclesWithVirtual(linearCyclesInput);
   const cal = buildWorkingDayCalendar(startDate, 730);
@@ -259,6 +260,26 @@ export function scheduleIssues(
   const startedStates = workflowStates
     .filter((s) => s.type === "started")
     .sort((a, b) => a.position - b.position);
+
+  // Position at or above which an issue is considered "actively in progress".
+  // If the user hasn't picked one, default to the lowest "started" position (= every started state).
+  // Issues whose current state position is below this are treated as not yet in progress —
+  // their startedAt is ignored for daysSpent and pinning. Use case: an issue moved into
+  // "In Progress" then dropped back to "Waiting for info" (a started state below the configured
+  // start) should not accrue working days while waiting.
+  let startPosition: number | null = null;
+  if (startStatusName) {
+    const match = workflowStates.find((s) => s.name === startStatusName && s.type === "started");
+    if (match) startPosition = match.position;
+  }
+  if (startPosition === null) {
+    startPosition = startedStates.length > 0 ? startedStates[0].position : null;
+  }
+  function isActivelyInProgress(issue: LinearIssue): boolean {
+    if (!issue.startedAt) return false;
+    if (startPosition === null) return true; // no workflow info → fall back to legacy behaviour
+    return issue.state.type === "started" && issue.state.position >= startPosition;
+  }
 
   function getStateProgress(issue: LinearIssue): number {
     const t = issue.state.type;
@@ -316,7 +337,7 @@ export function scheduleIssues(
     if (issue.startedAt) {
       if (isDone(issue)) {
         daysSpent = Math.max(0.5, duration + halfDayAdjustment(issue.startedAt, doneEndDateStr.get(issue.id) ?? null));
-      } else {
+      } else if (isActivelyInProgress(issue)) {
         const startedDate = new Date(issue.startedAt);
         startedDate.setHours(0, 0, 0, 0);
         const startedWd = cal.toWorkingDay(dateToCalendarOffset(startedDate, startDate));
@@ -324,6 +345,7 @@ export function scheduleIssues(
         // today only counts as half a working day.
         daysSpent = Math.max(0.5, sched.countSchedulable(startedWd, todayWd) + halfDayAdjustment(issue.startedAt, new Date().toISOString()));
       }
+      // else: issue is in a "started" state below the configured start status — leave daysSpent null.
     }
     const isLate = !isDone(issue) && issue.startedAt != null && daysSpent != null && hasEstimate && daysSpent > estimate;
     let endDay = cal.toCalendar(sched.toWorkingDay(endSi - 1)) + 1;
@@ -377,7 +399,7 @@ export function scheduleIssues(
   const workerFreeAtSi = new Array(effectiveNumWorkers).fill(0);
 
   const pinnedRemaining = new Set(
-    issues.filter((i) => i.startedAt && !isDone(i)).map((i) => i.id),
+    issues.filter((i) => isActivelyInProgress(i) && !isDone(i)).map((i) => i.id),
   );
 
   let progress = true;
@@ -464,7 +486,7 @@ export function scheduleIssues(
         for (const bid of undoneDeps) {
           earliest = Math.max(earliest, endSiMap.get(bid) ?? 0);
         }
-        if (issue.state.type === "unstarted" || issue.state.type === "backlog" || issue.state.type === "triage") {
+        if (issue.state.type === "unstarted" || issue.state.type === "backlog" || issue.state.type === "triage" || !isActivelyInProgress(issue)) {
           earliest = Math.max(earliest, todaySi);
         }
         if (earliest <= atTime) {
@@ -554,7 +576,7 @@ export function scheduleIssues(
               earliest = Math.max(earliest, endSiMap.get(bid) ?? Infinity);
             }
             const issue = issueMap.get(id);
-            if (issue && (issue.state.type === "unstarted" || issue.state.type === "backlog" || issue.state.type === "triage")) {
+            if (issue && (issue.state.type === "unstarted" || issue.state.type === "backlog" || issue.state.type === "triage" || !isActivelyInProgress(issue))) {
               earliest = Math.max(earliest, todaySi);
             }
             return earliest;
