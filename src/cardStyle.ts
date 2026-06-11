@@ -37,3 +37,26 @@ export function isBlockedDisplay(issue: Pick<ScheduledIssue, "stateType" | "done
   if (issue.stateType === "started") return false;
   return issue.blockedBy.some((b) => !b.done);
 }
+
+/**
+ * Whether right-clicking the card should open the "remove blocker" context menu.
+ * Only relevant when writes are enabled and the issue actually has blockers to remove.
+ */
+export function canShowRemoveBlockerMenu(
+  issue: Pick<ScheduledIssue, "blockedBy">,
+  writeEnabled: boolean,
+): boolean {
+  return writeEnabled && issue.blockedBy.length > 0;
+}
+
+/**
+ * Whether dragging `source` onto `target` would duplicate an existing "blocked by" relation
+ * (target already blocks source). Used to disallow the drop visually + functionally so we
+ * don't send Linear a redundant mutation.
+ */
+export function wouldDuplicateBlocker(
+  source: Pick<ScheduledIssue, "blockedBy">,
+  target: Pick<ScheduledIssue, "id">,
+): boolean {
+  return source.blockedBy.some((b) => b.id === target.id);
+}

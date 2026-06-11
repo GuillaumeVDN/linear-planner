@@ -18,6 +18,7 @@ export interface LinearIssue {
   labels: { nodes: Array<{ name: string; color: string }> };
   relations: {
     nodes: Array<{
+      id: string;
       type: string;
       relatedIssue: { id: string; identifier: string };
     }>;
@@ -236,6 +237,7 @@ export async function fetchProjectIssues(projectId: string): Promise<LinearIssue
               labels { nodes { name color } }
               relations {
                 nodes {
+                  id
                   type
                   relatedIssue { id identifier }
                 }
@@ -260,6 +262,39 @@ export async function fetchProjectIssues(projectId: string): Promise<LinearIssue
 /** Issues tagged `no-planner` are excluded from the planner entirely. */
 export function isPlannableIssue(issue: Pick<LinearIssue, "labels">): boolean {
   return !issue.labels.nodes.some((l) => l.name === "no-planner");
+}
+
+/**
+ * Delete a single IssueRelation by id. Requires the `write` OAuth scope.
+ */
+export async function deleteIssueRelation(relationId: string): Promise<void> {
+  await gql<{ issueRelationDelete: { success: boolean } }>(
+    `
+    mutation IssueRelationDelete($id: String!) {
+      issueRelationDelete(id: $id) {
+        success
+      }
+    }
+  `,
+    { id: relationId },
+  );
+}
+
+/**
+ * Create a "blocks" relation: `blockerId` blocks `blockedId`. Requires the `write` OAuth scope.
+ */
+export async function createBlockingRelation(blockerId: string, blockedId: string): Promise<void> {
+  // `type` is an `IssueRelationType` enum — must be a bare identifier, not a quoted string.
+  await gql<{ issueRelationCreate: { success: boolean } }>(
+    `
+    mutation IssueRelationCreate($issueId: String!, $relatedIssueId: String!) {
+      issueRelationCreate(input: { issueId: $issueId, relatedIssueId: $relatedIssueId, type: blocks }) {
+        success
+      }
+    }
+  `,
+    { issueId: blockerId, relatedIssueId: blockedId },
+  );
 }
 
 /**

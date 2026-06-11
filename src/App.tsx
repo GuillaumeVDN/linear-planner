@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates } from "./linear";
+import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates, createBlockingRelation, deleteIssueRelation } from "./linear";
 import type { LinearProject, LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState } from "./linear";
-import { startLogin, handleOAuthCallback, getCallbackPath, isAuthenticated, clearTokens, logout } from "./auth";
+import { startLogin, handleOAuthCallback, getCallbackPath, isAuthenticated, clearTokens, logout, isWriteEnabled, setWriteEnabled } from "./auth";
 import { scheduleIssues } from "./scheduler";
 import type { ScheduleResult } from "./scheduler";
 import { GanttChart } from "./GanttChart";
@@ -30,6 +30,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
+  const [writeEnabled, setWriteEnabledState] = useState(isWriteEnabled());
 
   const [projectIssues, setProjectIssues] = useState<LinearIssue[]>([]);
   const [projectCycles, setProjectCycles] = useState<LinearCycle[]>([]);
@@ -295,18 +296,54 @@ export default function App() {
     navigateToProject(null);
   }, []);
 
+  const handleToggleWriteEnabled = useCallback(async (next: boolean) => {
+    if (next === writeEnabled) return;
+    const msg = next
+      ? "Enable write access? You'll be redirected to Linear to re-authorize with read+write scope."
+      : "Switch back to read-only? You'll be redirected to Linear to re-authorize.";
+    if (!window.confirm(msg)) return;
+    setWriteEnabled(next);
+    setWriteEnabledState(next);
+    await logout();
+    startLogin();
+  }, [writeEnabled]);
+
+  const handleCreateBlockingRelation = useCallback(async (blockerId: string, blockedId: string) => {
+    await createBlockingRelation(blockerId, blockedId);
+    // Refetch issues so the new relation shows up in the schedule and tree.
+    if (selectedProjectId) await loadProject(selectedProjectId);
+  }, [selectedProjectId, loadProject]);
+
+  const handleDeleteRelation = useCallback(async (relationId: string) => {
+    await deleteIssueRelation(relationId);
+    if (selectedProjectId) await loadProject(selectedProjectId);
+  }, [selectedProjectId, loadProject]);
+
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       <header style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "var(--surface)", display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center" }}>
           <h1 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Linear planner</h1>
           {connected && (
-            <button
-              onClick={handleDisconnect}
-              style={{ ...buttonStyle, background: "transparent", color: "var(--text-muted)", padding: "4px 12px", fontSize: 12, marginLeft: "auto" }}
-            >
-              Disconnect
-            </button>
+            <>
+              <label
+                style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", cursor: "pointer", marginLeft: "auto" }}
+                title="Allow drag-and-drop dependency edits (requires Linear write scope)"
+              >
+                <input
+                  type="checkbox"
+                  checked={writeEnabled}
+                  onChange={(e) => handleToggleWriteEnabled(e.target.checked)}
+                />
+                Allow writes
+              </label>
+              <button
+                onClick={handleDisconnect}
+                style={{ ...buttonStyle, background: "transparent", color: "var(--text-muted)", padding: "4px 12px", fontSize: 12 }}
+              >
+                Disconnect
+              </button>
+            </>
           )}
         </div>
 
@@ -429,10 +466,10 @@ export default function App() {
               <GanttChart schedule={schedule} showWeekends={showWeekends} showHolidays={showHolidays} showCooldown={showCooldown} setShowWeekends={setShowWeekends} setShowHolidays={setShowHolidays} setShowCooldown={setShowCooldown} />
             )}
             {!loading && !error && schedule && mode === "tree" && (
-              <DependencyTree schedule={schedule} variant={drawCrossMilestoneDeps ? "split" : "individual"} includeDone={includeDoneIssuesTree} />
+              <DependencyTree schedule={schedule} variant={drawCrossMilestoneDeps ? "split" : "individual"} includeDone={includeDoneIssuesTree} writeEnabled={writeEnabled} onCreateBlockingRelation={handleCreateBlockingRelation} onDeleteRelation={handleDeleteRelation} />
             )}
             {!loading && !error && schedule && mode === "treeGlobal" && (
-              <DependencyTree schedule={schedule} variant="global" includeDone={includeDoneIssuesTreeGlobal} />
+              <DependencyTree schedule={schedule} variant="global" includeDone={includeDoneIssuesTreeGlobal} writeEnabled={writeEnabled} onCreateBlockingRelation={handleCreateBlockingRelation} onDeleteRelation={handleDeleteRelation} />
             )}
             {!loading && !error && !schedule && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 64, color: "var(--text-muted)" }}>Select a project to display.</div>

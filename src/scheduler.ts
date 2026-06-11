@@ -24,7 +24,7 @@ export interface ScheduledIssue {
   hasEstimate: boolean;
   done: boolean;
   isLate: boolean; // in-progress and has taken more working days than estimated
-  blockedBy: Array<{ identifier: string; title: string; done: boolean }>;
+  blockedBy: Array<{ id: string; identifier: string; title: string; done: boolean; relationId: string }>;
   startedAtRaw: string | null;
   endedAtRaw: string | null;
   labels: Array<{ name: string; color: string }>;
@@ -296,6 +296,9 @@ export function scheduleIssues(
   const isDone = buildIsDone(issues, workflowStates, endStatusName);
   const blockedBy = new Map<string, Set<string>>();
   const allBlockedBy = new Map<string, Set<string>>();
+  // (blockedId, blockerId) → Linear IssueRelation.id, so we can delete the relation later.
+  const relationIdByPair = new Map<string, string>();
+  const pairKey = (blockedId: string, blockerId: string) => `${blockedId}|${blockerId}`;
   for (const issue of issues) {
     blockedBy.set(issue.id, new Set());
     allBlockedBy.set(issue.id, new Set());
@@ -306,6 +309,7 @@ export function scheduleIssues(
         const targetId = rel.relatedIssue.id;
         if (allBlockedBy.has(targetId)) allBlockedBy.get(targetId)!.add(issue.id);
         if (!isDone(issue) && blockedBy.has(targetId)) blockedBy.get(targetId)!.add(issue.id);
+        relationIdByPair.set(pairKey(targetId, issue.id), rel.id);
       }
     }
   }
@@ -365,8 +369,18 @@ export function scheduleIssues(
       startedAtRaw: issue.startedAt, endedAtRaw: isDone(issue) ? (doneEndDateStr.get(issue.id) ?? null) : null,
       labels: issue.labels.nodes,
       blockedBy: Array.from(allBlockedBy.get(issue.id) ?? [])
-        .map((id) => { const b = issueMap.get(id); return b ? { identifier: b.identifier, title: b.title, done: isDone(b) } : null; })
-        .filter((x): x is { identifier: string; title: string; done: boolean } => !!x),
+        .map((bid) => {
+          const b = issueMap.get(bid);
+          if (!b) return null;
+          return {
+            id: b.id,
+            identifier: b.identifier,
+            title: b.title,
+            done: isDone(b),
+            relationId: relationIdByPair.get(pairKey(issue.id, bid)) ?? "",
+          };
+        })
+        .filter((x): x is { id: string; identifier: string; title: string; done: boolean; relationId: string } => !!x),
     };
   }
 

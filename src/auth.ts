@@ -1,10 +1,23 @@
 const LINEAR_AUTH_URL = "https://linear.app/oauth/authorize";
 const LINEAR_TOKEN_URL = "https://api.linear.app/oauth/token";
 const LINEAR_REVOKE_URL = "https://api.linear.app/oauth/revoke";
-const SCOPES = "read";
 const AUTH_STORAGE_KEY = "linear-planner-auth";
 const PKCE_STORAGE_KEY = "linear-planner-pkce";
 const STATE_STORAGE_KEY = "linear-planner-oauth-state";
+const WRITE_ENABLED_KEY = "linear-planner-write-enabled";
+
+/** Whether the user has opted into write-scoped OAuth (needed for drag-to-block actions). */
+export function isWriteEnabled(): boolean {
+  return localStorage.getItem(WRITE_ENABLED_KEY) === "true";
+}
+
+export function setWriteEnabled(v: boolean): void {
+  localStorage.setItem(WRITE_ENABLED_KEY, String(v));
+}
+
+function getScopes(): string {
+  return isWriteEnabled() ? "read,write" : "read";
+}
 
 interface AuthTokens {
   accessToken: string;
@@ -57,7 +70,7 @@ export async function startLogin(): Promise<void> {
   url.searchParams.set("client_id", getClientId());
   url.searchParams.set("redirect_uri", getRedirectUri());
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", SCOPES);
+  url.searchParams.set("scope", getScopes());
   url.searchParams.set("code_challenge", codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
   url.searchParams.set("state", state);
