@@ -369,33 +369,16 @@ export default function App() {
                 ))}
               </select>
               {schedule && (
-                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{schedule.issues.length} issues</span>
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                  {schedule.issues.length} issues
+                  {(() => {
+                    const total = schedule.issues.reduce((s, i) => s + (i.hasEstimate ? i.estimate : 0), 0);
+                    const fmt = total % 1 === 0 ? `${total}` : total.toFixed(1);
+                    return ` · ${fmt} working day${total === 1 ? "" : "s"} for one person`;
+                  })()}
+                </span>
               )}
             </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-muted)" }}>
-              Number of people working in parallel
-              <div style={{ display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
-                <button onClick={() => setNumWorkers((n) => Math.max(1, n - 1))} disabled={numWorkers <= 1} style={stepperButtonStyle}>-</button>
-                <span style={{ padding: "4px 12px", fontSize: 13, fontWeight: 600, minWidth: 32, textAlign: "center", background: "var(--bg)", color: "var(--text)" }}>
-                  {Math.min(numWorkers, maxParallelism)}
-                </span>
-                <button onClick={() => setNumWorkers((n) => Math.min(maxParallelism, n + 1))} disabled={numWorkers >= maxParallelism} style={stepperButtonStyle}>+</button>
-              </div>
-            </div>
-
-            {startedStates.length > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 13, color: "var(--text-muted)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  Start status
-                  <StatusSelect states={startedStates} startedStates={startedStates} value={effectiveStartStatus} onChange={setStartStatusName} />
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  End status
-                  <StatusSelect states={endStatusCandidates} startedStates={startedStates} value={effectiveEndStatus} onChange={setEndStatusName} />
-                </div>
-              </div>
-            )}
 
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ display: "flex", borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
@@ -409,24 +392,30 @@ export default function App() {
                   Tree (global)
                 </button>
               </div>
-              {(mode === "tree" || mode === "treeGlobal") && (
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-muted)", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={mode === "tree" ? includeDoneIssuesTree : includeDoneIssuesTreeGlobal}
-                    onChange={(e) => {
-                      if (mode === "tree") setIncludeDoneIssuesTree(e.target.checked);
-                      else setIncludeDoneIssuesTreeGlobal(e.target.checked);
-                    }}
-                  />
-                  Include done issues
-                </label>
-              )}
-              {mode === "tree" && (
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-muted)", cursor: "pointer" }}>
-                  <input type="checkbox" checked={drawCrossMilestoneDeps} onChange={(e) => setDrawCrossMilestoneDeps(e.target.checked)} />
-                  Draw dependencies between milestones
-                </label>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 13, color: "var(--text-muted)", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                Number of people working in parallel
+                <div style={{ display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
+                  <button onClick={() => setNumWorkers((n) => Math.max(1, n - 1))} disabled={numWorkers <= 1} style={stepperButtonStyle}>-</button>
+                  <span style={{ padding: "4px 12px", fontSize: 13, fontWeight: 600, minWidth: 32, textAlign: "center", background: "var(--bg)", color: "var(--text)" }}>
+                    {Math.min(numWorkers, maxParallelism)}
+                  </span>
+                  <button onClick={() => setNumWorkers((n) => Math.min(maxParallelism, n + 1))} disabled={numWorkers >= maxParallelism} style={stepperButtonStyle}>+</button>
+                </div>
+              </div>
+              {startedStates.length > 0 && (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    Start status
+                    <StatusSelect states={startedStates} startedStates={startedStates} value={effectiveStartStatus} onChange={setStartStatusName} />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    End status
+                    <StatusSelect states={endStatusCandidates} startedStates={startedStates} value={effectiveEndStatus} onChange={setEndStatusName} />
+                  </div>
+                </>
               )}
             </div>
           </>
@@ -478,10 +467,28 @@ export default function App() {
               <GanttChart schedule={schedule} showWeekends={showWeekends} showHolidays={showHolidays} showCooldown={showCooldown} setShowWeekends={setShowWeekends} setShowHolidays={setShowHolidays} setShowCooldown={setShowCooldown} />
             )}
             {!loading && !error && schedule && mode === "tree" && (
-              <DependencyTree schedule={schedule} variant={drawCrossMilestoneDeps ? "split" : "individual"} includeDone={includeDoneIssuesTree} writeEnabled={writeEnabled} onCreateBlockingRelation={handleCreateBlockingRelation} onDeleteRelation={handleDeleteRelation} />
+              <DependencyTree
+                schedule={schedule}
+                variant={drawCrossMilestoneDeps ? "split" : "individual"}
+                includeDone={includeDoneIssuesTree}
+                setIncludeDone={setIncludeDoneIssuesTree}
+                drawCrossMilestoneDeps={drawCrossMilestoneDeps}
+                setDrawCrossMilestoneDeps={setDrawCrossMilestoneDeps}
+                writeEnabled={writeEnabled}
+                onCreateBlockingRelation={handleCreateBlockingRelation}
+                onDeleteRelation={handleDeleteRelation}
+              />
             )}
             {!loading && !error && schedule && mode === "treeGlobal" && (
-              <DependencyTree schedule={schedule} variant="global" includeDone={includeDoneIssuesTreeGlobal} writeEnabled={writeEnabled} onCreateBlockingRelation={handleCreateBlockingRelation} onDeleteRelation={handleDeleteRelation} />
+              <DependencyTree
+                schedule={schedule}
+                variant="global"
+                includeDone={includeDoneIssuesTreeGlobal}
+                setIncludeDone={setIncludeDoneIssuesTreeGlobal}
+                writeEnabled={writeEnabled}
+                onCreateBlockingRelation={handleCreateBlockingRelation}
+                onDeleteRelation={handleDeleteRelation}
+              />
             )}
             {!loading && !error && !schedule && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 64, color: "var(--text-muted)" }}>Select a project to display.</div>

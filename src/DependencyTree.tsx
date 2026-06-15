@@ -18,6 +18,9 @@ export function DependencyTree({
   schedule,
   variant = "split",
   includeDone = true,
+  setIncludeDone,
+  drawCrossMilestoneDeps,
+  setDrawCrossMilestoneDeps,
   writeEnabled = false,
   onCreateBlockingRelation,
   onDeleteRelation,
@@ -25,6 +28,9 @@ export function DependencyTree({
   schedule: ScheduleResult;
   variant?: TreeVariant;
   includeDone?: boolean;
+  setIncludeDone?: (v: boolean) => void;
+  drawCrossMilestoneDeps?: boolean;
+  setDrawCrossMilestoneDeps?: (v: boolean) => void;
   writeEnabled?: boolean;
   /** Called after the user confirms a drag-drop: dragged card becomes blocked by target card. */
   onCreateBlockingRelation?: (blockerId: string, blockedId: string) => Promise<void>;
@@ -106,7 +112,15 @@ export function DependencyTree({
 
   return (
     <>
-      <Legend issues={schedule.issues} />
+      <Legend
+        issues={schedule.issues}
+        treeOptions={setIncludeDone ? {
+          includeDone,
+          setIncludeDone,
+          drawCrossMilestoneDeps: variant === "split" || variant === "individual" ? !!drawCrossMilestoneDeps : undefined,
+          setDrawCrossMilestoneDeps: (variant === "split" || variant === "individual") && setDrawCrossMilestoneDeps ? setDrawCrossMilestoneDeps : undefined,
+        } : undefined}
+      />
       <div
         ref={containerRef}
         onMouseDown={handleMouseDown}
