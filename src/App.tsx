@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates, createBlockingRelation, deleteIssueRelation } from "./linear";
-import type { LinearProject, LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState } from "./linear";
+import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates, fetchIssueStateHistory, createBlockingRelation, deleteIssueRelation } from "./linear";
+import type { LinearProject, LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState, StateTransition } from "./linear";
 import { startLogin, handleOAuthCallback, getCallbackPath, isAuthenticated, clearTokens, logout, isWriteEnabled, setWriteEnabled } from "./auth";
 import { scheduleIssues } from "./scheduler";
 import type { ScheduleResult } from "./scheduler";
@@ -27,6 +27,7 @@ export default function App() {
   const [startStatusName, setStartStatusName] = useState("");
   const [endStatusName, setEndStatusName] = useState("");
   const [doneEndDates, setDoneEndDates] = useState<Map<string, string>>(new Map());
+  const [stateHistoryByIssue, setStateHistoryByIssue] = useState<Map<string, StateTransition[]>>(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
@@ -68,16 +69,16 @@ export default function App() {
 
   const maxParallelism = useMemo(() => {
     if (projectIssues.length === 0) return 1;
-    const unlimited = scheduleIssues(projectIssues, projectIssues.length, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates, effectiveStartStatus);
+    const unlimited = scheduleIssues(projectIssues, projectIssues.length, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates, effectiveStartStatus, stateHistoryByIssue);
     return unlimited.usedWorkers;
-  }, [projectIssues, projectCycles, projectMilestones, workflowStates, chartStart, effectiveEndStatus, doneEndDates, effectiveStartStatus]);
+  }, [projectIssues, projectCycles, projectMilestones, workflowStates, chartStart, effectiveEndStatus, doneEndDates, effectiveStartStatus, stateHistoryByIssue]);
 
   const effectiveWorkers = Math.min(numWorkers, maxParallelism);
 
   const schedule: ScheduleResult | null = useMemo(() => {
     if (projectIssues.length === 0) return null;
-    return scheduleIssues(projectIssues, effectiveWorkers, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates, effectiveStartStatus);
-  }, [projectIssues, projectCycles, projectMilestones, workflowStates, effectiveWorkers, chartStart, effectiveEndStatus, doneEndDates, effectiveStartStatus]);
+    return scheduleIssues(projectIssues, effectiveWorkers, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates, effectiveStartStatus, stateHistoryByIssue);
+  }, [projectIssues, projectCycles, projectMilestones, workflowStates, effectiveWorkers, chartStart, effectiveEndStatus, doneEndDates, effectiveStartStatus, stateHistoryByIssue]);
 
   // Restore session on mount (or handle OAuth callback)
   useEffect(() => {
@@ -263,7 +264,18 @@ export default function App() {
         ? await fetchIssueEndDates(doneIds, endName)
         : new Map<string, string>();
 
+      // Fetch state-transition history for in-progress issues. The scheduler uses this to
+      // discount time spent in below-start states (e.g. "Waiting for info") which Linear's
+      // own `startedAt` would otherwise treat as start time.
+      const inProgressIds = issues
+        .filter((i) => i.startedAt && i.state.type === "started" && !doneIds.includes(i.id))
+        .map((i) => i.id);
+      const history = inProgressIds.length > 0
+        ? await fetchIssueStateHistory(inProgressIds)
+        : new Map<string, StateTransition[]>();
+
       setDoneEndDates(endDates);
+      setStateHistoryByIssue(history);
       setProjectIssues(issues);
       setProjectCycles(cycles);
       setProjectMilestones(milestones);

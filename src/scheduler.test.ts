@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { scheduleIssues } from "./scheduler";
-import type { LinearIssue, LinearMilestone, LinearWorkflowState } from "./linear";
+import type { LinearIssue, LinearMilestone, LinearWorkflowState, StateTransition } from "./linear";
 
 // --- Helpers ---
 
@@ -503,6 +503,99 @@ describe("scheduleIssues", () => {
       // No startStatusName → defaults to lowest started ("In Progress"), so A-1 counts.
       const result = scheduleIssues(issues, 1, MONDAY, [], [], WORKFLOW_STATES);
       expect(findIssue(result, "A-1")!.daysSpent).not.toBeNull();
+    });
+
+    describe("state-history-driven effective start", () => {
+      // Mirrors the FIN-691 case: Linear's `startedAt` fires when the issue first enters
+      // any "started" state — including "Waiting for info" (position below the configured
+      // start). The scheduler should treat the *first transition into an at-or-above-start
+      // state* as the real start, not Linear's startedAt.
+      // Workflow with a below-start "started" state and a regular start state.
+      const STATES_WITH_WAITING: LinearWorkflowState[] = [
+        { id: "s1", name: "To do", type: "unstarted", position: 1, color: "#ccc" },
+        { id: "s-wait", name: "Waiting for info", type: "started", position: -100, color: "#aaa" },
+        { id: "s2", name: "In Progress", type: "started", position: 2, color: "#36f" },
+        { id: "s3", name: "In Review", type: "started", position: 3, color: "#f90" },
+        { id: "s4", name: "Merged", type: "started", position: 4, color: "#0c0" },
+        { id: "s5", name: "Done", type: "completed", position: 6, color: "#0f0" },
+      ];
+      const wait = STATES_WITH_WAITING.find((s) => s.name === "Waiting for info")!;
+      const inProgress = STATES_WITH_WAITING.find((s) => s.name === "In Progress")!;
+      const todo = STATES_WITH_WAITING.find((s) => s.name === "To do")!;
+
+      const stateOf = (s: LinearWorkflowState) => ({ name: s.name, type: s.type, position: s.position });
+
+      it("uses the first transition into an at-or-above-start state as the effective start", () => {
+        const startedAt = isoDate(MONDAY); // Apr 7 — when Linear flagged the issue as started
+        const realStartIso = isoDate(addDays(MONDAY, 7)); // Apr 14 Mon — when it actually moved to In Progress
+        const issues = [
+          makeIssue({
+            id: "x", identifier: "X-1", estimate: 3,
+            startedAt,
+            state: { name: "In Progress", type: "started", color: "#36f", position: 2 },
+          }),
+        ];
+        const history: Map<string, StateTransition[]> = new Map([
+          ["x", [
+            { createdAt: startedAt, fromState: stateOf(todo), toState: stateOf(wait) },
+            { createdAt: realStartIso, fromState: stateOf(wait), toState: stateOf(inProgress) },
+          ]],
+        ]);
+        const result = scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress", history);
+        const x = findIssue(result, "X-1")!;
+        // Effective start should be Apr 14 (day 7 from MONDAY), NOT Apr 7 (day 0).
+        expect(x.startedAtRaw).toBe(realStartIso);
+        expect(x.startDay).toBe(7);
+        // belowStartBreakdown lists nothing because "Waiting for info" was BEFORE the first
+        // active entry (the user only cares about below-start periods after a real start).
+        expect(x.belowStartBreakdown).toEqual([]);
+      });
+
+      it("tracks below-start time when the issue dips back below start after first activating", () => {
+        // Sequence: To do → In Progress (Apr 7) → Waiting for info (Apr 8) → In Progress (Apr 14).
+        // "Waiting for info" was visited AFTER the first active entry, so it should be in the breakdown.
+        const firstActive = isoDate(MONDAY);
+        const enteredWaiting = isoDate(addDays(MONDAY, 1));
+        const backToProgress = isoDate(addDays(MONDAY, 7));
+        const issues = [
+          makeIssue({
+            id: "x", identifier: "X-1", estimate: 3,
+            startedAt: firstActive,
+            state: { name: "In Progress", type: "started", color: "#36f", position: 2 },
+          }),
+        ];
+        const history: Map<string, StateTransition[]> = new Map([
+          ["x", [
+            { createdAt: firstActive, fromState: stateOf(todo), toState: stateOf(inProgress) },
+            { createdAt: enteredWaiting, fromState: stateOf(inProgress), toState: stateOf(wait) },
+            { createdAt: backToProgress, fromState: stateOf(wait), toState: stateOf(inProgress) },
+          ]],
+        ]);
+        const result = scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress", history);
+        const x = findIssue(result, "X-1")!;
+        expect(x.startedAtRaw).toBe(firstActive);
+        expect(x.startDay).toBe(0);
+        // Below-start breakdown should report "Waiting for info" with some days > 0.
+        expect(x.belowStartBreakdown.length).toBe(1);
+        expect(x.belowStartBreakdown[0].stateName).toBe("Waiting for info");
+        expect(x.belowStartBreakdown[0].days).toBeGreaterThan(0);
+      });
+
+      it("falls back to Linear's startedAt when no state history is provided", () => {
+        const startedAt = isoDate(MONDAY);
+        const issues = [
+          makeIssue({
+            id: "y", identifier: "Y-1", estimate: 3,
+            startedAt,
+            state: { name: "In Progress", type: "started", color: "#36f", position: 2 },
+          }),
+        ];
+        // No history map passed → uses old logic (Linear's startedAt).
+        const result = scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress");
+        const y = findIssue(result, "Y-1")!;
+        expect(y.startedAtRaw).toBe(startedAt);
+        expect(y.startDay).toBe(0);
+      });
     });
 
     it("late in-progress issues extend to today and are marked isLate", () => {

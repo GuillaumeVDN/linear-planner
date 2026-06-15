@@ -297,6 +297,54 @@ export async function createBlockingRelation(blockerId: string, blockedId: strin
   );
 }
 
+export interface StateTransition {
+  createdAt: string;
+  fromState: { name: string; type: string; position: number } | null;
+  toState: { name: string; type: string; position: number } | null;
+}
+
+/**
+ * Fetch the full state-transition history for a set of issues, including the position
+ * of both the previous and next state. Used to accurately account for time spent in
+ * each workflow state (so a ticket that bounces in and out of "In Progress" doesn't
+ * accrue spurious days while it sat in "Waiting for info").
+ */
+export async function fetchIssueStateHistory(issueIds: string[]): Promise<Map<string, StateTransition[]>> {
+  const result = new Map<string, StateTransition[]>();
+  if (issueIds.length === 0) return result;
+
+  for (let i = 0; i < issueIds.length; i += 5) {
+    const batch = issueIds.slice(i, i + 5);
+    const params = batch.map((_, idx) => `$id${idx}: String!`).join(", ");
+    const aliases = batch
+      .map(
+        (_, idx) =>
+          `i${idx}: issue(id: $id${idx}) { id history(first: 100) { nodes { createdAt fromState { name type position } toState { name type position } } } }`,
+      )
+      .join("\n");
+
+    const variables: Record<string, unknown> = {};
+    batch.forEach((id, idx) => { variables[`id${idx}`] = id; });
+
+    const data = await gql<
+      Record<string, { id: string; history: { nodes: Array<{ createdAt: string; fromState: StateTransition["fromState"]; toState: StateTransition["toState"] }> } }>
+    >(`query(${params}) { ${aliases} }`, variables);
+
+    for (const key of Object.keys(data)) {
+      const issue = data[key];
+      if (!issue?.history?.nodes) continue;
+      // Linear returns history newest-first — flip so callers can iterate chronologically.
+      const transitions = [...issue.history.nodes]
+        .filter((n) => n.toState || n.fromState)
+        .reverse()
+        .map((n) => ({ createdAt: n.createdAt, fromState: n.fromState, toState: n.toState }));
+      result.set(issue.id, transitions);
+    }
+  }
+
+  return result;
+}
+
 /**
  * Fetch the date each issue entered a specific workflow state, by querying issue history.
  * Returns a map of issueId -> ISO date string.

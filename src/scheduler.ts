@@ -1,4 +1,4 @@
-import type { LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState } from "./linear";
+import type { LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState, StateTransition } from "./linear";
 import { buildWorkingDayCalendar, dateToCalendarOffset, halfDayAdjustment } from "./workingDays";
 
 export interface ScheduledIssue {
@@ -28,6 +28,12 @@ export interface ScheduledIssue {
   startedAtRaw: string | null;
   endedAtRaw: string | null;
   labels: Array<{ name: string; color: string }>;
+  /**
+   * For in-progress issues whose state history is available: time spent in "started"-type
+   * states whose position is below the configured start (e.g. "Waiting for info"), *after*
+   * the issue first reached an active state. Surfaced in the card tooltip.
+   */
+  belowStartBreakdown: Array<{ stateName: string; days: number }>;
 }
 
 export interface CyclePeriod {
@@ -246,6 +252,7 @@ export function scheduleIssues(
   endStatusName: string = "",
   doneEndDates: Map<string, string> = new Map(),
   startStatusName: string = "",
+  stateHistoryByIssue: Map<string, StateTransition[]> = new Map(),
 ): ScheduleResult {
   const { cycles: linearCycles, realIds: realCycleIds } = extendCyclesWithVirtual(linearCyclesInput);
   const cal = buildWorkingDayCalendar(startDate, 730);
@@ -335,19 +342,99 @@ export function scheduleIssues(
   const doneEndDateStr = new Map<string, string | null>();
   const scheduledIds = new Set<string>();
 
+  /**
+   * Walk a state-transition history and account for time per state.
+   * Returns:
+   *   - effectiveStartedAtIso: ISO timestamp of the FIRST transition into an active state
+   *     (type === "started" AND position >= startPosition). null if the issue never reached one.
+   *   - activeDays: total schedulable working days the issue spent in active states from
+   *     the effective start onwards.
+   *   - belowStart: per below-start-state breakdown (only states encountered AFTER the
+   *     first active entry).
+   *
+   * Uses segment-level halfDayAdjustment to be consistent with the rest of the scheduler.
+   */
+  function computeStateAccounting(transitions: StateTransition[], endIso: string): {
+    effectiveStartedAtIso: string;
+    activeDays: number;
+    belowStart: Array<{ stateName: string; days: number }>;
+  } | null {
+    if (startPosition === null) return null;
+    const sp = startPosition;
+    let firstActiveIdx = -1;
+    for (let i = 0; i < transitions.length; i++) {
+      const ts = transitions[i].toState;
+      if (ts && ts.type === "started" && ts.position >= sp) { firstActiveIdx = i; break; }
+    }
+    if (firstActiveIdx === -1) return null;
+    const effectiveStartedAtIso = transitions[firstActiveIdx].createdAt;
+
+    let activeDays = 0;
+    const belowStartByState = new Map<string, number>();
+
+    for (let i = firstActiveIdx; i < transitions.length; i++) {
+      const segStartIso = transitions[i].createdAt;
+      const segEndIso = i + 1 < transitions.length ? transitions[i + 1].createdAt : endIso;
+      if (segEndIso <= segStartIso) continue;
+      const state = transitions[i].toState;
+      if (!state) continue;
+      const segStart = new Date(segStartIso); segStart.setHours(0, 0, 0, 0);
+      const segEnd = new Date(segEndIso); segEnd.setHours(0, 0, 0, 0);
+      const startWd = cal.toWorkingDay(dateToCalendarOffset(segStart, startDate));
+      const endWd = cal.toWorkingDay(dateToCalendarOffset(segEnd, startDate));
+      const segDays = Math.max(0, sched.countSchedulable(startWd, endWd) + halfDayAdjustment(segStartIso, segEndIso));
+
+      if (state.type === "started" && state.position >= sp) {
+        activeDays += segDays;
+      } else if (state.type === "started" && state.position < sp) {
+        belowStartByState.set(state.name, (belowStartByState.get(state.name) ?? 0) + segDays);
+      }
+    }
+
+    return {
+      effectiveStartedAtIso,
+      activeDays,
+      belowStart: Array.from(belowStartByState.entries()).map(([stateName, days]) => ({ stateName, days })),
+    };
+  }
+
+  // Precompute per-issue accounting once, so Phase 1 pinning AND buildScheduledIssue share
+  // the SAME "effective started" timestamp. Without this, the card's `startDay` would still
+  // come from Linear's startedAt (e.g. June 3, when the issue first hit any started state)
+  // while `startedAtRaw` would show the corrected effective start (e.g. June 12).
+  const accountingByIssue = new Map<string, { effectiveStartedAtIso: string; activeDays: number; belowStart: Array<{ stateName: string; days: number }> }>();
+  for (const issue of issues) {
+    if (!issue.startedAt || isDone(issue) || !isActivelyInProgress(issue)) continue;
+    const history = stateHistoryByIssue.get(issue.id);
+    if (!history || history.length === 0) continue;
+    const acct = computeStateAccounting(history, new Date().toISOString());
+    if (acct) accountingByIssue.set(issue.id, acct);
+  }
+  function effectiveStartedAtFor(issue: LinearIssue): string | null {
+    return accountingByIssue.get(issue.id)?.effectiveStartedAtIso ?? issue.startedAt;
+  }
+
   function buildScheduledIssue(issue: LinearIssue, duration: number, estimate: number, startSi: number, endSi: number, worker: number): ScheduledIssue {
     const hasEstimate = issue.estimate != null && issue.estimate > 0;
     let daysSpent: number | null = null;
+    let belowStartBreakdown: Array<{ stateName: string; days: number }> = [];
+    let effectiveStartedAtRaw = issue.startedAt;
     if (issue.startedAt) {
       if (isDone(issue)) {
         daysSpent = Math.max(0.5, duration + halfDayAdjustment(issue.startedAt, doneEndDateStr.get(issue.id) ?? null));
       } else if (isActivelyInProgress(issue)) {
-        const startedDate = new Date(issue.startedAt);
-        startedDate.setHours(0, 0, 0, 0);
-        const startedWd = cal.toWorkingDay(dateToCalendarOffset(startedDate, startDate));
-        // Treat "now" as the end-of-period for half-day accounting: if it's still morning,
-        // today only counts as half a working day.
-        daysSpent = Math.max(0.5, sched.countSchedulable(startedWd, todayWd) + halfDayAdjustment(issue.startedAt, new Date().toISOString()));
+        const acct = accountingByIssue.get(issue.id);
+        if (acct) {
+          daysSpent = Math.max(0.5, acct.activeDays);
+          belowStartBreakdown = acct.belowStart;
+          effectiveStartedAtRaw = acct.effectiveStartedAtIso;
+        } else {
+          // Fallback: no state history — use Linear's startedAt directly.
+          const startedDate = new Date(issue.startedAt);
+          startedDate.setHours(0, 0, 0, 0);
+          const startedWd = cal.toWorkingDay(dateToCalendarOffset(startedDate, startDate));
+          daysSpent = Math.max(0.5, sched.countSchedulable(startedWd, todayWd) + halfDayAdjustment(issue.startedAt, new Date().toISOString()));
+        }
       }
       // else: issue is in a "started" state below the configured start status — leave daysSpent null.
     }
@@ -366,8 +453,10 @@ export function scheduleIssues(
       priority: issue.priority, priorityLabel: issue.priorityLabel,
       assigneeAvatarUrl: issue.assignee?.avatarUrl ?? null, assigneeName: issue.assignee?.name ?? null,
       daysSpent, hasEstimate, done: isDone(issue), isLate,
-      startedAtRaw: issue.startedAt, endedAtRaw: isDone(issue) ? (doneEndDateStr.get(issue.id) ?? null) : null,
+      startedAtRaw: effectiveStartedAtRaw,
+      endedAtRaw: isDone(issue) ? (doneEndDateStr.get(issue.id) ?? null) : null,
       labels: issue.labels.nodes,
+      belowStartBreakdown,
       blockedBy: Array.from(allBlockedBy.get(issue.id) ?? [])
         .map((bid) => {
           const b = issueMap.get(bid);
@@ -424,7 +513,12 @@ export function scheduleIssues(
       const undoneBlockers = Array.from(blockedBy.get(issueId) ?? []);
       if (!undoneBlockers.every((bid) => scheduledIds.has(bid))) continue;
 
-      const d = new Date(issue.startedAt!);
+      // Use the effective started timestamp (first entry into an active state) when state
+      // history is available, so the gantt bar starts where the work actually started — not
+      // at Linear's `startedAt`, which can be much earlier (e.g. moved to "Waiting for info"
+      // for days before reaching "In progress").
+      const effectiveStartedIso = effectiveStartedAtFor(issue) ?? issue.startedAt!;
+      const d = new Date(effectiveStartedIso);
       d.setHours(0, 0, 0, 0);
       const startWd = cal.toWorkingDay(dateToCalendarOffset(d, startDate));
       const desiredStartSi = sched.toSchedulable(startWd);

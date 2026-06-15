@@ -532,6 +532,15 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               <span>&middot;</span>
               <DurationBadge issue={tooltipInfo.issue} alwaysShowComparison />
             </div>
+            {tooltipInfo.issue.belowStartBreakdown.length > 0 && (
+              <div style={{ color: "var(--text-muted)", fontSize: 11, marginTop: 2 }}>
+                {tooltipInfo.issue.belowStartBreakdown.map((b) => (
+                  <div key={b.stateName}>
+                    {b.stateName}: {b.days % 1 === 0 ? b.days : b.days.toFixed(1)} working day{b.days === 1 ? "" : "s"}
+                  </div>
+                ))}
+              </div>
+            )}
             <div style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
               <span>{tooltipInfo.issue.daysSpent === null ? "~" : ""}{formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.startDay))}{tooltipInfo.issue.startedAtRaw ? `, ${formatParisTimeOfDay(tooltipInfo.issue.startedAtRaw)}` : ""}</span><span style={{ position: "relative", top: -2 }}>→</span><span>{!tooltipInfo.issue.done ? "~" : ""}{formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.endDay - 1))}{tooltipInfo.issue.endedAtRaw ? `, ${formatParisTimeOfDay(tooltipInfo.issue.endedAtRaw)}` : ""}</span>
             </div>
