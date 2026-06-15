@@ -266,29 +266,34 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
             }}
           >
             <div style={{ height: HEADER_HEIGHT, borderBottom: "1px solid var(--border)" }} />
-            {milestoneGroups.map((group) => (
-              <div key={group.milestoneId ?? "none"}>
-                <div
-                  ref={(el) => { msHeaderRefs.current[group.milestoneId ?? "none"] = el; }}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    justifyContent: "center",
-                    padding: "10px 12px",
-                    borderTop: "2px solid var(--iteration-line)",
-                    background: "var(--surface)",
-                    overflow: "hidden",
-                    gap: 1,
-                  }}
-                >
-                  <MilestoneHeader name={group.milestoneName} summary={group.summary} />
-                </div>
-                {group.workerRows.map((row) => (
-                  <div key={row.worker} style={{ height: ROW_HEIGHT + ROW_GAP, display: "flex", alignItems: "center", padding: "0 12px", fontSize: 13, fontWeight: 600, color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
+            {milestoneGroups.map((group) => {
+              const mid = group.milestoneId ?? "none";
+              const labelH = msHeaderHeights[mid] ?? 0;
+              const rowsH = group.workerRows.length * (ROW_HEIGHT + ROW_GAP);
+              const milestoneH = Math.max(labelH, rowsH);
+              // Label at the top, no per-row empty divs — the right side packs its rows from
+              // the top of the same milestone block, so vertical alignment comes from this
+              // outer height matching on both sides.
+              return (
+                <div key={mid} style={{ height: milestoneH }}>
+                  <div
+                    ref={(el) => { msHeaderRefs.current[mid] = el; }}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "flex-start",
+                      padding: "10px 12px",
+                      borderTop: "2px solid var(--iteration-line)",
+                      background: "var(--surface)",
+                      overflow: "hidden",
+                      gap: 1,
+                    }}
+                  >
+                    <MilestoneHeader name={group.milestoneName} summary={group.summary} />
                   </div>
-                ))}
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
 
           {/* Chart area */}
@@ -418,9 +423,13 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               )}
 
               {/* Milestone groups */}
-              {milestoneGroups.map((group) => (
-                <div key={group.milestoneId ?? "none"}>
-                  <div style={{ position: "relative", zIndex: 3, height: msHeaderHeights[group.milestoneId ?? "none"] ?? 0, borderTop: "2px solid var(--iteration-line)" }} />
+              {milestoneGroups.map((group) => {
+                const mid = group.milestoneId ?? "none";
+                const labelH = msHeaderHeights[mid] ?? 0;
+                const rowsH = group.workerRows.length * (ROW_HEIGHT + ROW_GAP);
+                const milestoneH = Math.max(labelH, rowsH);
+                return (
+                <div key={mid} style={{ height: milestoneH, position: "relative", zIndex: 3, borderTop: "2px solid var(--iteration-line)" }}>
                   {group.workerRows.map((row) => (
                     <div key={row.worker} style={{ position: "relative", zIndex: 2, height: ROW_HEIGHT + ROW_GAP, display: "flex", alignItems: "center", borderBottom: "1px solid var(--border)" }}>
                       {row.issues.map((issue) => {
@@ -491,7 +500,8 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                     </div>
                   ))}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
