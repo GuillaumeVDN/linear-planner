@@ -581,6 +581,50 @@ describe("scheduleIssues", () => {
         expect(x.belowStartBreakdown[0].days).toBeGreaterThan(0);
       });
 
+      it("does not overcount a calendar day that hosts multiple state transitions (FIN-592 regression)", () => {
+        // Issue moves through several active states on the SAME day, then settles. The
+        // earlier accounting logic incremented `countSchedulable(start, end)` per segment,
+        // which claims the whole calendar day for every segment that touches it — yielding
+        // an inflated daysSpent (e.g. 3 days for ~1.5 wall-clock days). The half-day-aware
+        // computation should produce a correct count instead.
+        const t0 = isoDate(MONDAY); // Mon UTC midnight = AM Paris (effective start)
+        const t1AfternoonSameDay = "2025-04-07T11:30:00.000Z"; // Mon PM Paris
+        const t2AlsoMonPM = "2025-04-07T13:00:00.000Z"; // Mon PM Paris (still same half-day)
+        const issues = [
+          makeIssue({
+            id: "x", identifier: "X-1", estimate: 3,
+            startedAt: t0,
+            state: stateOf(inProgress),
+          }),
+        ];
+        const history: Map<string, StateTransition[]> = new Map([
+          ["x", [
+            { createdAt: t0, fromState: stateOf(todo), toState: stateOf(inProgress) },
+            { createdAt: t1AfternoonSameDay, fromState: stateOf(inProgress), toState: { name: "In Review", type: "started", position: 3 } },
+            { createdAt: t2AlsoMonPM, fromState: { name: "In Review", type: "started", position: 3 }, toState: stateOf(inProgress) },
+          ]],
+        ]);
+        // Mock "now" to be a PM time on Tue (the day after MONDAY = Apr 8 PM).
+        const fakeNow = new Date("2025-04-08T14:00:00.000Z"); // Tue PM Paris
+        const realDate = Date;
+        // @ts-expect-error - mock Date constructor
+        globalThis.Date = class extends realDate {
+          constructor(...args: ConstructorParameters<typeof realDate>) {
+            if (args.length === 0) return new realDate(fakeNow);
+            // @ts-expect-error - spread args
+            return new realDate(...args);
+          }
+          static now() { return fakeNow.getTime(); }
+        } as DateConstructor;
+        try {
+          const result = scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress", history);
+          // Mon AM → Mon PM (1 half) + Mon PM → Mon PM (0 halves) + Mon PM → Tue PM-inclusive (3 halves) = 4 halves = 2 days.
+          expect(findIssue(result, "X-1")!.daysSpent).toBe(2);
+        } finally {
+          globalThis.Date = realDate;
+        }
+      });
+
       it("spawns extra worker lanes when more issues are started in parallel than W", () => {
         // 3 issues all started today on Apr 7 with W=2. Without lane expansion, the 3rd
         // would be pushed past the second's end. With expansion, all 3 should pin to day 0.

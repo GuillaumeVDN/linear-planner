@@ -405,32 +405,35 @@ export function scheduleIssues(
     if (firstActiveIdx === -1) return null;
     const effectiveStartedAtIso = transitions[firstActiveIdx].createdAt;
 
-    let activeDays = 0;
-    const belowStartByState = new Map<string, number>();
+    // Accumulate in half-day units to avoid double-counting calendar days that hold
+    // multiple transitions. Each segment [segStart, segEnd) covers the half-day units
+    // siHalfForIso(segStart) ≤ h < siHalfForIso(segEnd). The last segment, which ends at
+    // "now", *includes* the current half-day (we count today as worked when we're in it).
+    let activeHalves = 0;
+    const belowStartByStateHalves = new Map<string, number>();
 
     for (let i = firstActiveIdx; i < transitions.length; i++) {
       const segStartIso = transitions[i].createdAt;
-      const segEndIso = i + 1 < transitions.length ? transitions[i + 1].createdAt : endIso;
+      const isLastSeg = i + 1 >= transitions.length;
+      const segEndIso = isLastSeg ? endIso : transitions[i + 1].createdAt;
       if (segEndIso <= segStartIso) continue;
       const state = transitions[i].toState;
       if (!state) continue;
-      const segStart = new Date(segStartIso); segStart.setHours(0, 0, 0, 0);
-      const segEnd = new Date(segEndIso); segEnd.setHours(0, 0, 0, 0);
-      const startWd = cal.toWorkingDay(dateToCalendarOffset(segStart, startDate));
-      const endWd = cal.toWorkingDay(dateToCalendarOffset(segEnd, startDate));
-      const segDays = Math.max(0, sched.countSchedulable(startWd, endWd) + halfDayAdjustment(segStartIso, segEndIso));
+      const startHalf = siHalfForIso(segStartIso);
+      const endHalf = isLastSeg ? siHalfForIso(segEndIso) + 1 : siHalfForIso(segEndIso);
+      const segHalves = Math.max(0, endHalf - startHalf);
 
       if (state.type === "started" && state.position >= sp) {
-        activeDays += segDays;
+        activeHalves += segHalves;
       } else if (state.type === "started" && state.position < sp) {
-        belowStartByState.set(state.name, (belowStartByState.get(state.name) ?? 0) + segDays);
+        belowStartByStateHalves.set(state.name, (belowStartByStateHalves.get(state.name) ?? 0) + segHalves);
       }
     }
 
     return {
       effectiveStartedAtIso,
-      activeDays,
-      belowStart: Array.from(belowStartByState.entries()).map(([stateName, days]) => ({ stateName, days })),
+      activeDays: activeHalves / HALF_PER_DAY,
+      belowStart: Array.from(belowStartByStateHalves.entries()).map(([stateName, halves]) => ({ stateName, days: halves / HALF_PER_DAY })),
     };
   }
 
