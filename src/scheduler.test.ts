@@ -581,6 +581,58 @@ describe("scheduleIssues", () => {
         expect(x.belowStartBreakdown[0].days).toBeGreaterThan(0);
       });
 
+      it("spawns extra worker lanes when more issues are started in parallel than W", () => {
+        // 3 issues all started today on Apr 7 with W=2. Without lane expansion, the 3rd
+        // would be pushed past the second's end. With expansion, all 3 should pin to day 0.
+        const startedAt = isoDate(MONDAY);
+        const issues = [
+          makeIssue({ id: "a", identifier: "A-1", estimate: 5, startedAt, state: stateOf(inProgress) }),
+          makeIssue({ id: "b", identifier: "A-2", estimate: 5, startedAt, state: stateOf(inProgress) }),
+          makeIssue({ id: "c", identifier: "A-3", estimate: 5, startedAt, state: stateOf(inProgress) }),
+        ];
+        const result = scheduleIssues(issues, 2, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress");
+        // All three should start on day 0 — a third lane was created to honor real dates.
+        for (const id of ["A-1", "A-2", "A-3"]) {
+          expect(findIssue(result, id)!.startDay).toBe(0);
+        }
+        // 3 distinct worker lanes occupied.
+        const workers = new Set([findIssue(result, "A-1")!.worker, findIssue(result, "A-2")!.worker, findIssue(result, "A-3")!.worker]);
+        expect(workers.size).toBe(3);
+        // usedWorkers reflects the rendered lanes (3); configuredWorkers stays at the user's
+        // setting (2) so the milestone summary's theoretical schedule uses the right W.
+        expect(result.usedWorkers).toBe(3);
+        expect(result.configuredWorkers).toBe(2);
+      });
+
+      it("renders overflow lanes BELOW configured lanes even when overflow has an earlier start", () => {
+        // Two configured-W issues that don't start until day 5+, and one overflow issue
+        // (3rd in parallel) that starts on day 0. Without lane-grouping, the overflow row
+        // would float to the top by virtue of its earliest start. We want it below.
+        const lateStart = isoDate(addDays(MONDAY, 5)); // a Saturday — gets bumped to next Mon
+        const earlyStart = isoDate(MONDAY);
+        const issues = [
+          // Two issues started later, both on the same day.
+          makeIssue({ id: "late1", identifier: "LATE-1", estimate: 5, startedAt: lateStart, state: stateOf(inProgress) }),
+          makeIssue({ id: "late2", identifier: "LATE-2", estimate: 5, startedAt: lateStart, state: stateOf(inProgress) }),
+          // Third issue started earlier — forces a third lane (overflow) at day 0.
+          makeIssue({ id: "early", identifier: "EARLY-1", estimate: 5, startedAt: earlyStart, state: stateOf(inProgress) }),
+        ];
+        // BUT — wait, with W=2 and the early one being the 3rd issue to land in Phase 1,
+        // Phase 1 iterates in pinning order. We need the LATE issues to consume the two
+        // configured lanes first, then EARLY-1 to spill into overflow.
+        // Phase 1 processes pinnedRemaining; iteration order is the input issues order.
+        // So late1 → lane 0, late2 → lane 1, early → lane 2 (overflow) regardless of dates.
+        const result = scheduleIssues(issues, 2, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress");
+        const late1 = findIssue(result, "LATE-1")!;
+        const late2 = findIssue(result, "LATE-2")!;
+        const early = findIssue(result, "EARLY-1")!;
+        expect(result.usedWorkers).toBe(3);
+        // Overflow (EARLY-1) must be in a higher worker index than both configured lanes,
+        // not at the top despite its earlier start.
+        expect(early.worker).toBeGreaterThan(late1.worker);
+        expect(early.worker).toBeGreaterThan(late2.worker);
+      });
+
       it("falls back to Linear's startedAt when no state history is provided", () => {
         const startedAt = isoDate(MONDAY);
         const issues = [

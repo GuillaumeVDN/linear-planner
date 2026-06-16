@@ -65,7 +65,7 @@ function buildParentsAndMilestones(schedule: ScheduleResult) {
   for (const ms of milestoneOrder) {
     const msIssues = schedule.issues.filter((i) => (i.milestone?.id ?? null) === ms.id);
     msIssuesMap.set(ms.id, msIssues);
-    summaries.set(ms.id, buildMilestoneSummary(msIssues, schedule.startDate, schedule.usedWorkers, schedule.cycles));
+    summaries.set(ms.id, buildMilestoneSummary(msIssues, schedule.startDate, schedule.configuredWorkers, schedule.cycles));
   }
 
   return { parentsOf, milestoneOrder, msIssuesMap, summaries };

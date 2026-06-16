@@ -51,7 +51,12 @@ export interface MilestoneInfo {
 export interface ScheduleResult {
   issues: ScheduledIssue[];
   milestones: MilestoneInfo[];
+  /** Number of worker lanes actually rendered in the gantt (may exceed configuredWorkers
+   *  when more issues started in parallel than the configured capacity). */
   usedWorkers: number;
+  /** The W the scheduler was called with — the user's configured parallelism cap. Use this
+   *  (not usedWorkers) for theoretical-schedule comparisons in the milestone summary. */
+  configuredWorkers: number;
   totalDays: number;
   startDate: Date;
   todayOffset: number;
@@ -498,8 +503,11 @@ export function scheduleIssues(
   }
 
   // --- Phase 1: pin non-done started issues to their startedAt ---
-  const effectiveNumWorkers = Math.max(1, numWorkers);
-  const workerFreeAtSi = new Array(effectiveNumWorkers).fill(0);
+  // The user configures W workers, but reality sometimes has more issues started in
+  // parallel than W. To honor each issue's real start date, we may grow workerFreeAtSi
+  // beyond W here. Phase 2 only ever uses the first W slots for scheduling new work.
+  const configuredNumWorkers = Math.max(1, numWorkers);
+  const workerFreeAtSi: number[] = new Array(configuredNumWorkers).fill(0);
 
   const pinnedRemaining = new Set(
     issues.filter((i) => isActivelyInProgress(i) && !isDone(i)).map((i) => i.id),
@@ -530,12 +538,20 @@ export function scheduleIssues(
         earliestFromBlockers = Math.max(earliestFromBlockers, endSiMap.get(bid) ?? 0);
       }
 
-      let bestWorker = 0;
+      let bestWorker = -1;
       let bestStartSi = Infinity;
       const constrainedSi = Math.max(desiredStartSi, earliestFromBlockers);
-      for (let w = 0; w < effectiveNumWorkers; w++) {
+      for (let w = 0; w < workerFreeAtSi.length; w++) {
         const s = Math.max(workerFreeAtSi[w], constrainedSi);
         if (s < bestStartSi) { bestStartSi = s; bestWorker = w; }
+      }
+      // If no existing worker can start the issue at its actual desired start, spawn a new
+      // worker lane so the issue renders at the correct real Linear date. This happens when
+      // more issues were started in parallel than the configured W can accommodate.
+      if (bestStartSi > constrainedSi) {
+        bestWorker = workerFreeAtSi.length;
+        workerFreeAtSi.push(0);
+        bestStartSi = constrainedSi;
       }
 
       const startSi = bestStartSi;
@@ -610,11 +626,11 @@ export function scheduleIssues(
       return result;
     }
 
-    let safetyCounter = msIssues.length * effectiveNumWorkers + 100;
+    let safetyCounter = msIssues.length * configuredNumWorkers + 100;
     while (msRemaining.size > 0 && safetyCounter-- > 0) {
       let bestUsedW = -1;
       let bestUsedFree = Infinity;
-      for (let w = 0; w < effectiveNumWorkers; w++) {
+      for (let w = 0; w < configuredNumWorkers; w++) {
         if (workerFreeAtSi[w] > 0 && workerFreeAtSi[w] < bestUsedFree) {
           bestUsedFree = workerFreeAtSi[w];
           bestUsedW = w;
@@ -645,7 +661,7 @@ export function scheduleIssues(
 
       const nextReadySi = allReady[0].earliestSi;
       let canUseExisting = false;
-      for (let w = 0; w < effectiveNumWorkers; w++) {
+      for (let w = 0; w < configuredNumWorkers; w++) {
         if (workerFreeAtSi[w] > 0 && workerFreeAtSi[w] <= nextReadySi) {
           const ready = getReadyIssues(workerFreeAtSi[w]);
           if (ready.length > 0) {
@@ -658,13 +674,13 @@ export function scheduleIssues(
       }
       if (canUseExisting) continue;
 
-      const allUsedBusy = !Array.from({ length: effectiveNumWorkers }, (_, w) => w)
+      const allUsedBusy = !Array.from({ length: configuredNumWorkers }, (_, w) => w)
         .some((w) => workerFreeAtSi[w] > 0 && workerFreeAtSi[w] <= nextReadySi);
 
       if (allUsedBusy) {
         let newW = -1;
         let newFree = Infinity;
-        for (let w = 0; w < effectiveNumWorkers; w++) {
+        for (let w = 0; w < configuredNumWorkers; w++) {
           if (workerFreeAtSi[w] === 0) { newW = w; newFree = 0; break; }
           if (workerFreeAtSi[w] < newFree) { newFree = workerFreeAtSi[w]; newW = w; }
         }
@@ -747,7 +763,18 @@ export function scheduleIssues(
   }
 
   sortRowsByEarliestStart(doneItems, 0);
-  sortRowsByEarliestStart(scheduled, numDoneLanes);
+  // Sort configured-W lanes first (earliest start at top), then overflow lanes underneath.
+  // This keeps the visual contract: lanes 0..(configuredWorkers-1) are the user's planned
+  // capacity; anything below is the result of Phase 1 spilling over because more issues
+  // were started in parallel than configured.
+  const overflowLaneCutoff = numDoneLanes + configuredNumWorkers;
+  const configuredScheduled = scheduled.filter((s) => s.worker < overflowLaneCutoff);
+  const overflowScheduled = scheduled.filter((s) => s.worker >= overflowLaneCutoff);
+  sortRowsByEarliestStart(configuredScheduled, numDoneLanes);
+  const configuredLanesUsed = configuredScheduled.length > 0
+    ? Math.max(...configuredScheduled.map((s) => s.worker)) - numDoneLanes + 1
+    : 0;
+  sortRowsByEarliestStart(overflowScheduled, numDoneLanes + configuredLanesUsed);
 
   const allIssues = [...doneItems, ...scheduled];
 
@@ -786,5 +813,5 @@ export function scheduleIssues(
 
   const milestones: MilestoneInfo[] = [...projectMilestones].sort((a, b) => a.sortOrder - b.sortOrder);
 
-  return { issues: allIssues, milestones, usedWorkers, totalDays, startDate, todayOffset, iterations, cycles };
+  return { issues: allIssues, milestones, usedWorkers, configuredWorkers: configuredNumWorkers, totalDays, startDate, todayOffset, iterations, cycles };
 }
