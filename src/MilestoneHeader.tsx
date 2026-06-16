@@ -17,8 +17,11 @@ function schedulableDaysBetween(
 ): number {
   if (endCalDay <= startCalDay) return 0;
   const lastCycleEnd = cycles.length > 0 ? Math.max(...cycles.map((c) => c.endDay)) : -Infinity;
+  // start/end can be fractional (.5 = PM). Walk every integer day the range touches.
+  const startInt = Math.floor(startCalDay);
+  const endIntExclusive = Math.ceil(endCalDay);
   let count = 0;
-  for (let d = startCalDay; d < endCalDay; d++) {
+  for (let d = startInt; d < endIntExclusive; d++) {
     if (isNonWorkingDay(dayToDate(chartStart, d))) continue;
     if (cycles.length > 0 && d < lastCycleEnd) {
       // Inside the known-cycle range: only count days that fall within some cycle.

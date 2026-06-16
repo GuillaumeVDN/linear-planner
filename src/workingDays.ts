@@ -133,7 +133,7 @@ export function getParisHourMinute(isoString: string): { hour: number; minute: n
   return { hour, minute };
 }
 
-function isAfterThreshold(isoString: string): boolean {
+export function isAfterThreshold(isoString: string): boolean {
   const { hour, minute } = getParisHourMinute(isoString);
   return hour > 13 || (hour === 13 && minute >= 30);
 }

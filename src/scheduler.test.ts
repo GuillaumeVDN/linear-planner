@@ -633,6 +633,56 @@ describe("scheduleIssues", () => {
         expect(early.worker).toBeGreaterThan(late2.worker);
       });
 
+      it("positions a done issue started in the afternoon at a .5 (PM) startDay", () => {
+        // 11:30 UTC = 13:30 Paris CEST → exactly at the threshold (PM).
+        const pmStart = "2025-04-07T11:30:00.000Z";
+        const completed = isoDate(addDays(MONDAY, 1)); // Tue AM
+        const issues = [
+          makeIssue({
+            id: "x", identifier: "X-1", estimate: 1,
+            startedAt: pmStart,
+            completedAt: completed,
+            state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+          }),
+        ];
+        const result = scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "Merged");
+        const x = findIssue(result, "X-1")!;
+        expect(x.startDay).toBe(0.5);
+        // Tue AM end → siHalf 2+1 = 3, fractional cal = 0.5 PM of day 0? wait. Let's check.
+        // siHalfForIso(Tue AM) = workingDay(1)*2 + 0 = 2. endSi = max(1+1, 2+1) = 3.
+        // siHalfToFractionalCalendar(3) = cal.toCalendar(workingDay(1)) + 0.5 = 1 + 0.5 = 1.5.
+        expect(x.endDay).toBe(1.5);
+      });
+
+      it("two half-day done issues share one calendar day across AM/PM", () => {
+        // Done issue 1: Mon AM → Mon AM (just AM). Done issue 2: Mon PM → Mon PM.
+        const amStart = isoDate(MONDAY); // AM Paris
+        const amEnd = isoDate(MONDAY);   // same — bar covers only AM half
+        const pmStart = "2025-04-07T11:30:00.000Z";
+        const pmEnd = "2025-04-07T11:30:00.000Z";
+        const issues = [
+          makeIssue({
+            id: "am", identifier: "AM-1", estimate: 0.5,
+            startedAt: amStart, completedAt: amEnd,
+            state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+          }),
+          makeIssue({
+            id: "pm", identifier: "PM-1", estimate: 0.5,
+            startedAt: pmStart, completedAt: pmEnd,
+            state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+          }),
+        ];
+        const result = scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "Merged");
+        const am = findIssue(result, "AM-1")!;
+        const pm = findIssue(result, "PM-1")!;
+        // AM card: 0.0 → 0.5
+        expect(am.startDay).toBe(0);
+        expect(am.endDay).toBe(0.5);
+        // PM card: 0.5 → 1.0
+        expect(pm.startDay).toBe(0.5);
+        expect(pm.endDay).toBe(1);
+      });
+
       it("falls back to Linear's startedAt when no state history is provided", () => {
         const startedAt = isoDate(MONDAY);
         const issues = [

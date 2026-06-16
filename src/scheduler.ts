@@ -1,5 +1,12 @@
 import type { LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState, StateTransition } from "./linear";
-import { buildWorkingDayCalendar, dateToCalendarOffset, halfDayAdjustment } from "./workingDays";
+import { buildWorkingDayCalendar, dateToCalendarOffset, halfDayAdjustment, isAfterThreshold } from "./workingDays";
+
+/**
+ * Internally the scheduler operates in HALF-DAY units. `si` (schedulable index) values
+ * passed around between phases are *half-day* indices: even = AM of a working day, odd = PM.
+ * Display values (`startDay`, `endDay`) are decimals with .0/.5 precision derived from these.
+ */
+const HALF_PER_DAY = 2;
 
 export interface ScheduledIssue {
   id: string;
@@ -267,7 +274,31 @@ export function scheduleIssues(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayWd = cal.toWorkingDay(dateToCalendarOffset(today, startDate));
-  const todaySi = sched.toSchedulable(todayWd);
+  // si values used throughout are in half-day units (even=AM, odd=PM of a schedulable day).
+  // "Today" is the first half-day at-or-after now.
+  const todaySi = sched.toSchedulable(todayWd) * HALF_PER_DAY + (isAfterThreshold(new Date().toISOString()) ? 1 : 0);
+
+  /** Round an estimate (in days) to the nearest half-day, ≥ 1 half. Used as work units in the packer. */
+  function estimateToHalves(est: number): number {
+    return Math.max(1, Math.round(est * HALF_PER_DAY));
+  }
+
+  /** Convert a half-day si index to a fractional calendar-day offset. .0 = AM, .5 = PM. */
+  function siHalfToFractionalCalendar(siHalf: number): number {
+    const wholeSi = Math.floor(siHalf / HALF_PER_DAY);
+    const halfOffset = (siHalf % HALF_PER_DAY) * 0.5;
+    return cal.toCalendar(sched.toWorkingDay(wholeSi)) + halfOffset;
+  }
+
+  /** Half-day si index for the morning of the working day containing the given ISO timestamp,
+   *  shifted to PM if the time is after the 13:30 Paris threshold. */
+  function siHalfForIso(iso: string): number {
+    const d = new Date(iso);
+    d.setHours(0, 0, 0, 0);
+    const wd = cal.toWorkingDay(dateToCalendarOffset(d, startDate));
+    const baseSi = sched.toSchedulable(wd);
+    return baseSi * HALF_PER_DAY + (isAfterThreshold(iso) ? 1 : 0);
+  }
 
   const startedStates = workflowStates
     .filter((s) => s.type === "started")
@@ -426,7 +457,8 @@ export function scheduleIssues(
     let effectiveStartedAtRaw = issue.startedAt;
     if (issue.startedAt) {
       if (isDone(issue)) {
-        daysSpent = Math.max(0.5, duration + halfDayAdjustment(issue.startedAt, doneEndDateStr.get(issue.id) ?? null));
+        // si values already encode AM/PM positioning of start/end times — no extra adjustment needed.
+        daysSpent = Math.max(0.5, (endSi - startSi) / HALF_PER_DAY);
       } else if (isActivelyInProgress(issue)) {
         const acct = accountingByIssue.get(issue.id);
         if (acct) {
@@ -444,14 +476,15 @@ export function scheduleIssues(
       // else: issue is in a "started" state below the configured start status — leave daysSpent null.
     }
     const isLate = !isDone(issue) && issue.startedAt != null && daysSpent != null && hasEstimate && daysSpent > estimate;
-    let endDay = cal.toCalendar(sched.toWorkingDay(endSi - 1)) + 1;
+    // startSi/endSi are in half-day units → convert to decimal calendar offsets (.0=AM, .5=PM).
+    let endDay = siHalfToFractionalCalendar(endSi);
     if (isLate) {
       endDay = Math.max(endDay, dateToCalendarOffset(today, startDate) + 1);
     }
     return {
       id: issue.id, identifier: issue.identifier, title: issue.title, url: issue.url,
       duration, estimate,
-      startDay: cal.toCalendar(sched.toWorkingDay(startSi)),
+      startDay: siHalfToFractionalCalendar(startSi),
       endDay,
       worker, milestone: issue.projectMilestone,
       stateName: issue.state.name, stateType: issue.state.type, stateColor: issue.state.color, stateProgress: getStateProgress(issue),
@@ -482,22 +515,23 @@ export function scheduleIssues(
   for (const issue of issues) {
     if (!isDone(issue) || !issue.startedAt) continue;
     scheduledIds.add(issue.id);
-    const d = new Date(issue.startedAt);
-    d.setHours(0, 0, 0, 0);
-    const startWd = cal.toWorkingDay(dateToCalendarOffset(d, startDate));
-    const startSi = sched.toSchedulable(startWd);
+    // siHalf: start at the morning of the start day, shifted to PM if started after 13:30.
+    const startSi = siHalfForIso(issue.startedAt);
     const endDateStr = doneEndDates.get(issue.id) ?? issue.completedAt;
     doneEndDateStr.set(issue.id, endDateStr);
     const hasEst = issue.estimate != null && issue.estimate > 0;
     const baseDur = hasEst ? issue.estimate! : DEFAULT_ESTIMATE;
     let endSi: number;
     if (endDateStr) {
-      const endDate = new Date(endDateStr);
-      endDate.setHours(0, 0, 0, 0);
-      const endWd = cal.toWorkingDay(dateToCalendarOffset(endDate, startDate));
-      endSi = startSi + Math.max(1, sched.countSchedulable(startWd, endWd));
+      // End at the morning of the end day by default, or PM if ended after 13:30.
+      // We add 1 (one half-day) so the half-day containing the end is included in the bar.
+      const endHalfRaw = siHalfForIso(endDateStr);
+      endSi = Math.max(startSi + 1, endHalfRaw + 1);
     } else {
-      endSi = startSi + Math.max(1, Math.min(baseDur, sched.countSchedulable(startWd, todayWd)));
+      // No explicit end date: fall back to estimate-bounded duration up to today.
+      const startWdForCount = Math.floor(startSi / HALF_PER_DAY);
+      const cappedHalves = Math.max(1, Math.min(estimateToHalves(baseDur), sched.countSchedulable(startWdForCount, todayWd) * HALF_PER_DAY));
+      endSi = startSi + cappedHalves;
     }
     endSiMap.set(issue.id, endSi);
   }
@@ -526,12 +560,11 @@ export function scheduleIssues(
       // at Linear's `startedAt`, which can be much earlier (e.g. moved to "Waiting for info"
       // for days before reaching "In progress").
       const effectiveStartedIso = effectiveStartedAtFor(issue) ?? issue.startedAt!;
-      const d = new Date(effectiveStartedIso);
-      d.setHours(0, 0, 0, 0);
-      const startWd = cal.toWorkingDay(dateToCalendarOffset(d, startDate));
-      const desiredStartSi = sched.toSchedulable(startWd);
+      // Half-day desired start: AM of the effective day, or PM if started after 13:30 Paris.
+      const desiredStartSi = siHalfForIso(effectiveStartedIso);
       const hasEstimate = issue.estimate != null && issue.estimate > 0;
       const est = hasEstimate ? issue.estimate! : DEFAULT_ESTIMATE;
+      const estHalves = estimateToHalves(est);
 
       let earliestFromBlockers = 0;
       for (const bid of undoneBlockers) {
@@ -546,8 +579,7 @@ export function scheduleIssues(
         if (s < bestStartSi) { bestStartSi = s; bestWorker = w; }
       }
       // If no existing worker can start the issue at its actual desired start, spawn a new
-      // worker lane so the issue renders at the correct real Linear date. This happens when
-      // more issues were started in parallel than the configured W can accommodate.
+      // worker lane so the issue renders at the correct real Linear date.
       if (bestStartSi > constrainedSi) {
         bestWorker = workerFreeAtSi.length;
         workerFreeAtSi.push(0);
@@ -555,9 +587,10 @@ export function scheduleIssues(
       }
 
       const startSi = bestStartSi;
-      const endSi = startSi + est;
+      const endSi = startSi + estHalves;
       const isLate = hasEstimate && todaySi >= endSi;
-      const effectiveEndSi = isLate ? todaySi + 1 : endSi;
+      // When late, extend the bar to cover today fully (end of PM of today).
+      const effectiveEndSi = isLate ? (Math.floor(todaySi / HALF_PER_DAY) + 1) * HALF_PER_DAY : endSi;
       workerFreeAtSi[bestWorker] = effectiveEndSi;
       endSiMap.set(issue.id, effectiveEndSi);
       scheduledIds.add(issue.id);
@@ -587,7 +620,8 @@ export function scheduleIssues(
   function scheduleIssueOnWorker(issue: LinearIssue, worker: number, startSi: number) {
     const hasEstimate = issue.estimate != null && issue.estimate > 0;
     const est = hasEstimate ? issue.estimate! : DEFAULT_ESTIMATE;
-    const endSi = startSi + est;
+    // si values are in half-day units; estimates are in days.
+    const endSi = startSi + estimateToHalves(est);
 
     workerFreeAtSi[worker] = endSi;
     endSiMap.set(issue.id, endSi);
@@ -727,14 +761,17 @@ export function scheduleIssues(
   const doneItems: ScheduledIssue[] = [];
   for (const issue of issues) {
     if (!isDone(issue) || !issue.startedAt) continue;
-    const d = new Date(issue.startedAt);
-    d.setHours(0, 0, 0, 0);
-    const startWd = cal.toWorkingDay(dateToCalendarOffset(d, startDate));
-    const startSi = sched.toSchedulable(startWd);
-    const endSi = endSiMap.get(issue.id) ?? startSi + 1;
+    // Half-day-aware start: AM of effective day, PM if started after threshold.
+    const startSi = siHalfForIso(issue.startedAt);
+    const endSi = endSiMap.get(issue.id) ?? startSi + HALF_PER_DAY;
     const hasEst = issue.estimate != null && issue.estimate > 0;
     const est = hasEst ? issue.estimate! : DEFAULT_ESTIMATE;
-    doneItems.push(buildScheduledIssue(issue, endSi - startSi, est, startSi, endSi, -1));
+    // `duration` for the ScheduledIssue is the number of distinct calendar working days the
+    // bar touches — kept as a whole-day count for back-compat with the legacy duration field.
+    const daysTouched = endSi > startSi
+      ? Math.floor((endSi - 1) / HALF_PER_DAY) - Math.floor(startSi / HALF_PER_DAY) + 1
+      : 0;
+    doneItems.push(buildScheduledIssue(issue, daysTouched, est, startSi, endSi, -1));
   }
 
   // Pack done issues into display lanes by overlap.

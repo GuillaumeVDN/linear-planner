@@ -83,7 +83,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
 
     const noMsIssues = schedule.issues.filter((i) => !i.milestone);
     if (noMsIssues.length > 0) {
-      groups.push({ milestoneId: null, milestoneName: "No milestone", workerRows: buildWorkerRows(noMsIssues), summary: buildMilestoneSummary(noMsIssues, schedule.startDate, schedule.usedWorkers, schedule.cycles) });
+      groups.push({ milestoneId: null, milestoneName: "No milestone", workerRows: buildWorkerRows(noMsIssues), summary: buildMilestoneSummary(noMsIssues, schedule.startDate, schedule.configuredWorkers, schedule.cycles) });
     }
 
     return groups;
@@ -173,7 +173,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
     return map;
   }, [visibleDays, totalCalendarDays]);
 
-  // Bar column helpers
+  // Bar column helpers — handle integer day spans (cycles, cooldowns).
   function getBarCols(startDay: number, endDay: number): [number, number] | null {
     let firstCol = -1;
     let lastCol = -1;
@@ -189,6 +189,42 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
     return [firstCol, lastCol + 1];
   }
 
+  /**
+   * Half-day-aware geometry for issue bars. `startDay`/`endDay` are decimal calendar offsets
+   * (.0 = AM, .5 = PM). Returns the absolute left/width in pixels for the bar, accounting
+   * for hidden columns (weekends/holidays/cooldown) and AM/PM trimming on boundary days.
+   */
+  function getBarBounds(startDay: number, endDay: number): { left: number; width: number; firstVisCol: number; lastVisCol: number } | null {
+    const startInt = Math.floor(startDay);
+    const startFrac = startDay - startInt; // 0 or 0.5
+    const endHasFrac = endDay - Math.floor(endDay) > 0;
+    const lastIntDay = endHasFrac ? Math.floor(endDay) : endDay - 1;
+    const endTrailingFrac = endHasFrac ? 0.5 : 1.0;
+    if (lastIntDay < startInt) return null;
+
+    let firstVisCol = -1;
+    let lastVisCol = -1;
+    let firstVisDay = -1;
+    let lastVisDay = -1;
+    const end = Math.min(lastIntDay, dayToCol.length - 1);
+    for (let d = startInt; d <= end; d++) {
+      const c = dayToCol[d];
+      if (c >= 0) {
+        if (firstVisCol < 0) { firstVisCol = c; firstVisDay = d; }
+        lastVisCol = c;
+        lastVisDay = d;
+      }
+    }
+    if (firstVisCol < 0) return null;
+
+    const leftFrac = firstVisDay === startInt ? startFrac : 0;
+    const left = (firstVisCol + leftFrac) * DAY_WIDTH;
+    const rightFrac = lastVisDay === lastIntDay ? endTrailingFrac : 1.0;
+    const right = (lastVisCol + rightFrac) * DAY_WIDTH;
+
+    return { left, width: right - left, firstVisCol, lastVisCol };
+  }
+
   const totalVisibleCols = visibleDays.length;
   const chartWidth = totalVisibleCols * DAY_WIDTH;
 
@@ -196,7 +232,8 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
   // First column past the latest scheduled issue's end — used to gray "no-more-work" future days.
   const futureStartCol = useMemo(() => {
     const lastIssueEnd = Math.max(...schedule.issues.map((i) => i.endDay), 0);
-    for (let d = lastIssueEnd; d < dayToCol.length; d++) {
+    // Round up to the next integer day for the lookup (endDay can be fractional now).
+    for (let d = Math.ceil(lastIssueEnd); d < dayToCol.length; d++) {
       if (dayToCol[d] >= 0) return dayToCol[d];
     }
     return -1;
@@ -220,7 +257,8 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
     const ongoing = schedule.issues.filter((i) => i.stateType === "started" && !i.done);
     let anchorCol = -1;
     if (ongoing.length > 0) {
-      const oldestStart = Math.min(...ongoing.map((i) => i.startDay));
+      // Floor for the column lookup since startDay can now be fractional (.5 = PM).
+      const oldestStart = Math.floor(Math.min(...ongoing.map((i) => i.startDay)));
       if (oldestStart >= 0 && oldestStart < dayToCol.length && dayToCol[oldestStart] >= 0) {
         anchorCol = dayToCol[oldestStart];
       }
@@ -392,7 +430,15 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                 <div key={`g-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: DAY_WIDTH, height: "100%", background: "var(--weekend)", pointerEvents: "none" }} />
               ))}
 
-              {/* Monday grid lines */}
+              {/* Faint grid lines: every day boundary + each day's mid-point (AM/PM split). */}
+              {visibleDays.map((h) => (
+                <div key={`day-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: 1, height: "100%", background: "rgba(128,128,128,0.06)", pointerEvents: "none" }} />
+              ))}
+              {visibleDays.map((h) => (
+                <div key={`half-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH + DAY_WIDTH / 2, top: 0, width: 1, height: "100%", background: "rgba(128,128,128,0.03)", pointerEvents: "none" }} />
+              ))}
+
+              {/* Monday grid lines (stronger, on top of the faint daily lines) */}
               {visibleDays.filter((h) => h.isMonday).map((h) => (
                 <div key={`gl-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: 1, height: "100%", background: "var(--border)", pointerEvents: "none" }} />
               ))}
@@ -431,21 +477,24 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                 return (
                 <div key={mid} style={{ height: milestoneH, position: "relative", zIndex: 3, borderTop: "2px solid var(--iteration-line)" }}>
                   {group.workerRows.map((row) => (
-                    <div key={row.worker} style={{ position: "relative", zIndex: 2, height: ROW_HEIGHT + ROW_GAP, display: "flex", alignItems: "center", borderBottom: "1px solid var(--border)" }}>
+                    <div key={row.worker} style={{ position: "relative", zIndex: 2, height: ROW_HEIGHT + ROW_GAP, display: "flex", alignItems: "center" }}>
                       {row.issues.map((issue) => {
-                        const cols = getBarCols(issue.startDay, issue.endDay);
-                        if (!cols) return null;
-                        const [startCol, endCol] = cols;
-                        const barWidth = Math.max((endCol - startCol) * DAY_WIDTH - 4, 4);
+                        const bounds = getBarBounds(issue.startDay, issue.endDay);
+                        if (!bounds) return null;
+                        const { left: barLeft, width: barWidthRaw, firstVisCol } = bounds;
+                        const barWidth = Math.max(barWidthRaw - 4, 4);
                         const isBlocked = isBlockedDisplay(issue);
 
-                        // Non-working/outside-cycle day overlays within bar
+                        // Non-working/outside-cycle day overlays within bar. We iterate by
+                        // integer day to find grayed cells, positioning each overlay relative
+                        // to the bar's first visible column.
                         const grayedCols: number[] = [];
-                        for (let d = issue.startDay; d < issue.endDay && d < dayToCol.length; d++) {
+                        const iterEnd = Math.min(Math.ceil(issue.endDay), dayToCol.length);
+                        for (let d = Math.floor(issue.startDay); d < iterEnd; d++) {
                           const c = dayToCol[d];
                           if (c >= 0) {
                             const info = allDays[d];
-                            if (info && info.isGrayed) grayedCols.push(c - startCol);
+                            if (info && info.isGrayed) grayedCols.push(c - firstVisCol);
                           }
                         }
 
@@ -460,7 +509,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                             onClick={() => window.open(issue.url, "_blank")}
                             style={{
                               position: "absolute",
-                              left: startCol * DAY_WIDTH + 2,
+                              left: barLeft + 2,
                               width: barWidth,
                               height: ROW_HEIGHT - 4,
                               background: [
@@ -552,7 +601,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               </div>
             )}
             <div style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-              <span>{tooltipInfo.issue.daysSpent === null ? "~" : ""}{formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.startDay))}{tooltipInfo.issue.startedAtRaw ? `, ${formatParisTimeOfDay(tooltipInfo.issue.startedAtRaw)}` : ""}</span><span style={{ position: "relative", top: -2 }}>→</span><span>{!tooltipInfo.issue.done ? "~" : ""}{formatDate(dayToDate(schedule.startDate, tooltipInfo.issue.endDay - 1))}{tooltipInfo.issue.endedAtRaw ? `, ${formatParisTimeOfDay(tooltipInfo.issue.endedAtRaw)}` : ""}</span>
+              <span>{tooltipInfo.issue.daysSpent === null ? "~" : ""}{formatDate(dayToDate(schedule.startDate, Math.floor(tooltipInfo.issue.startDay)))}{tooltipInfo.issue.startedAtRaw ? `, ${formatParisTimeOfDay(tooltipInfo.issue.startedAtRaw)}` : ""}</span><span style={{ position: "relative", top: -2 }}>→</span><span>{!tooltipInfo.issue.done ? "~" : ""}{formatDate(dayToDate(schedule.startDate, Math.ceil(tooltipInfo.issue.endDay) - 1))}{tooltipInfo.issue.endedAtRaw ? `, ${formatParisTimeOfDay(tooltipInfo.issue.endedAtRaw)}` : ""}</span>
             </div>
             {!tooltipInfo.issue.done && tooltipInfo.issue.blockedBy.filter((b) => !b.done).length > 0 && (
               <div style={{ color: "var(--text-muted)", marginTop: 4, fontSize: 11 }}>
