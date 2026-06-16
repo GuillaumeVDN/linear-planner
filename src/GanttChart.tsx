@@ -1,6 +1,6 @@
 import { useMemo, useRef, useEffect, useState } from "react";
 import type { ScheduleResult, ScheduledIssue } from "./scheduler";
-import { dayToDate, formatDate, isBankHoliday, formatParisTimeOfDay } from "./workingDays";
+import { dayToDate, formatDate, isBankHoliday, formatParisTimeOfDay, isAfterThreshold } from "./workingDays";
 import { StatusCircle } from "./StatusCircle";
 import { BlockedIcon, PriorityIcon, AssigneeAvatar, DurationBadge } from "./CardIcons";
 import { MilestoneHeader, buildMilestoneSummary, type MilestoneSummaryData } from "./MilestoneHeader";
@@ -8,7 +8,7 @@ import { Legend } from "./Legend";
 import { BLOCKED_STRIPE, NO_ESTIMATE_BG, DONE_STRIPE, ongoingStatusBg, isBlockedDisplay } from "./cardStyle";
 import {
   ROW_HEIGHT, ROW_GAP, CYCLE_ROW_HEIGHT, DATE_ROW_HEIGHT, HEADER_HEIGHT,
-  DAY_WIDTH, LABEL_WIDTH, CYCLE_COLORS,
+  DAY_WIDTH, LABEL_WIDTH,
   type DayInfo, isOutsideCycles,
 } from "./ganttLayout";
 
@@ -251,6 +251,8 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
     return -1;
   }, [schedule.todayOffset, dayToCol]);
 
+  const todayIsPm = useMemo(() => isAfterThreshold(new Date().toISOString()), []);
+
   useEffect(() => {
     if (!containerRef.current) return;
     // Anchor: start of the oldest currently-ongoing issue. Fall back to today.
@@ -355,10 +357,10 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                       key={`cycle-${i}`}
                       style={{
                         position: "absolute", left, width, top: 0, height: CYCLE_ROW_HEIGHT,
-                        background: CYCLE_COLORS[i % CYCLE_COLORS.length],
+                        background: "rgba(59, 130, 246, 0.18)",
                         display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
                         fontSize: 11, fontWeight: 600, color: "var(--text)", overflow: "hidden", whiteSpace: "nowrap",
-                        borderLeft: cols[0] > 0 ? "1px solid var(--border)" : "none", borderRight: "1px solid var(--border)",
+                        borderLeft: cols[0] > 0 ? "1px solid #333" : "none",
                       }}
                     >
                       {width > 50 && (
@@ -388,7 +390,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                         position: "absolute", left, width, top: 0, height: CYCLE_ROW_HEIGHT,
                         display: "flex", alignItems: "center", justifyContent: "center",
                         fontSize: 9, fontWeight: 500, color: "var(--text-muted)", overflow: "hidden", whiteSpace: "nowrap",
-                        borderLeft: "2px solid var(--border)",
+                        borderLeft: "1px solid #333",
                       }}
                     >
                       {width > 40 ? "Cooldown" : ""}
@@ -410,8 +412,8 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                       paddingBottom: 6, fontSize: 11,
                       color: h.isGrayed || isPast ? "var(--text-muted)" : "var(--text)",
                       opacity: h.isGrayed ? 0.5 : isPast ? 0.6 : 1,
-                      borderLeft: h.col === todayCol ? "1px solid rgba(239, 68, 68, 0.6)" : (h.col > 0 && (h.isCycleStart || h.isCycleEnd)) ? "2px solid var(--border)" : h.isMonday ? "1px solid var(--border)" : "none",
-                      background: h.col === todayCol ? "rgba(128,128,128,0.06)" : (isPast || isFutureEmpty) ? "rgba(128,128,128,0.08)" : undefined,
+                      borderLeft: (h.col > 0 && (h.isCycleStart || h.isCycleEnd)) ? "1px solid #333" : h.isMonday ? "1px solid var(--border)" : "none",
+                      background: h.col === todayCol ? "rgba(96, 165, 250, 0.12)" : (isPast || isFutureEmpty) ? "rgba(128,128,128,0.08)" : undefined,
                     }}
                   >
                     <span>{h.date.toLocaleDateString("en-US", { weekday: "short" })}</span>
@@ -443,12 +445,9 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                 <div key={`gl-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: 1, height: "100%", background: "var(--border)", pointerEvents: "none" }} />
               ))}
 
-              {/* Cycle boundary lines (gray, thick) */}
-              {visibleDays.filter((h) => h.isCycleStart && h.col > 0).map((h) => (
-                <div key={`cs-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: 2, height: "100%", background: "var(--border)", pointerEvents: "none", zIndex: 2 }} />
-              ))}
-              {visibleDays.filter((h) => h.isCycleEnd).map((h) => (
-                <div key={`ce-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: 2, height: "100%", background: "var(--border)", pointerEvents: "none", zIndex: 2 }} />
+              {/* Cycle boundary lines (one per boundary col — a day that's both cycle-start AND cycle-end gets a single line). */}
+              {visibleDays.filter((h) => (h.isCycleStart && h.col > 0) || h.isCycleEnd).map((h) => (
+                <div key={`cb-${h.col}`} style={{ position: "absolute", left: h.col * DAY_WIDTH, top: 0, width: 1, height: "100%", background: "#333", pointerEvents: "none", zIndex: 2 }} />
               ))}
 
               {/* Past overlay */}
@@ -459,13 +458,13 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
               {futureStartCol >= 0 && futureStartCol < visibleDays.length && (
                 <div style={{ position: "absolute", left: futureStartCol * DAY_WIDTH, top: 0, width: (visibleDays.length - futureStartCol) * DAY_WIDTH, height: "100%", background: "rgba(128,128,128,0.15)", pointerEvents: "none", zIndex: 1 }} />
               )}
-              {/* Today highlight */}
+              {/* Today's still-current half — very light yellow (AM all day, PM only after the threshold). */}
               {todayCol >= 0 && (
-                <div style={{ position: "absolute", left: todayCol * DAY_WIDTH, top: 0, width: DAY_WIDTH, height: "100%", background: "rgba(128,128,128,0.05)", pointerEvents: "none", zIndex: 1 }} />
+                <div style={{ position: "absolute", left: todayCol * DAY_WIDTH + (todayIsPm ? DAY_WIDTH / 2 : 0), top: 0, width: todayIsPm ? DAY_WIDTH / 2 : DAY_WIDTH, height: "100%", background: "rgba(96, 165, 250, 0.12)", pointerEvents: "none", zIndex: 1 }} />
               )}
-              {/* Today vertical line, continues from the header */}
-              {todayCol >= 0 && (
-                <div style={{ position: "absolute", left: todayCol * DAY_WIDTH, top: 0, width: 1, height: "100%", background: "rgba(239, 68, 68, 0.6)", pointerEvents: "none", zIndex: 1 }} />
+              {/* When it's already afternoon, treat today's AM half like past time (no yellow there). */}
+              {todayCol >= 0 && todayIsPm && (
+                <div style={{ position: "absolute", left: todayCol * DAY_WIDTH, top: 0, width: DAY_WIDTH / 2, height: "100%", background: "rgba(128,128,128,0.15)", pointerEvents: "none", zIndex: 1 }} />
               )}
 
               {/* Milestone groups */}
