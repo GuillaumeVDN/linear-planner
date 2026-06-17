@@ -5,6 +5,7 @@ const AUTH_STORAGE_KEY = "linear-planner-auth";
 const PKCE_STORAGE_KEY = "linear-planner-pkce";
 const STATE_STORAGE_KEY = "linear-planner-oauth-state";
 const WRITE_ENABLED_KEY = "linear-planner-write-enabled";
+const AUTO_REFRESH_KEY = "linear-planner-auto-refresh";
 
 /** Whether the user has opted into write-scoped OAuth (needed for drag-to-block actions). */
 export function isWriteEnabled(): boolean {
@@ -13,6 +14,15 @@ export function isWriteEnabled(): boolean {
 
 export function setWriteEnabled(v: boolean): void {
   localStorage.setItem(WRITE_ENABLED_KEY, String(v));
+}
+
+/** Whether the app should re-fetch the latest Linear data when the tab regains focus. Defaults on. */
+export function isAutoRefreshEnabled(): boolean {
+  return localStorage.getItem(AUTO_REFRESH_KEY) !== "false";
+}
+
+export function setAutoRefreshEnabled(v: boolean): void {
+  localStorage.setItem(AUTO_REFRESH_KEY, String(v));
 }
 
 function getScopes(): string {

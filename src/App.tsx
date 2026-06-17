@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates, fetchIssueStateHistory, createBlockingRelation, deleteIssueRelation } from "./linear";
 import type { LinearProject, LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState, StateTransition } from "./linear";
-import { startLogin, handleOAuthCallback, getCallbackPath, isAuthenticated, clearTokens, logout, isWriteEnabled, setWriteEnabled } from "./auth";
+import { startLogin, handleOAuthCallback, getCallbackPath, isAuthenticated, clearTokens, logout, isWriteEnabled, setWriteEnabled, isAutoRefreshEnabled, setAutoRefreshEnabled } from "./auth";
 import { scheduleIssues } from "./scheduler";
 import type { ScheduleResult } from "./scheduler";
 import { GanttChart } from "./GanttChart";
@@ -32,6 +32,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
   const [writeEnabled, setWriteEnabledState] = useState(isWriteEnabled());
+  const [autoRefresh, setAutoRefreshState] = useState(isAutoRefreshEnabled());
 
   const [projectIssues, setProjectIssues] = useState<LinearIssue[]>([]);
   const [projectCycles, setProjectCycles] = useState<LinearCycle[]>([]);
@@ -296,6 +297,29 @@ export default function App() {
     }
   }, [connected, selectedProjectId, loadProject]);
 
+  // Auto-refresh: re-fetch the latest Linear data when the tab regains focus.
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
+  useEffect(() => {
+    if (!connected || !autoRefresh || !selectedProjectId) return;
+    const refresh = () => {
+      if (document.visibilityState === "visible" && !loadingRef.current) {
+        loadProject(selectedProjectId);
+      }
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [connected, autoRefresh, selectedProjectId, loadProject]);
+
+  const handleToggleAutoRefresh = useCallback((next: boolean) => {
+    setAutoRefreshEnabled(next);
+    setAutoRefreshState(next);
+  }, []);
+
   const handleDisconnect = useCallback(async () => {
     await logout();
     setConnected(false);
@@ -341,6 +365,17 @@ export default function App() {
             <>
               <label
                 style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", cursor: "pointer", marginLeft: "auto" }}
+                title="Re-fetch the latest Linear data whenever this tab regains focus"
+              >
+                <input
+                  type="checkbox"
+                  checked={autoRefresh}
+                  onChange={(e) => handleToggleAutoRefresh(e.target.checked)}
+                />
+                Auto-refresh
+              </label>
+              <label
+                style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}
                 title="Allow drag-and-drop dependency edits (requires Linear write scope)"
               >
                 <input
@@ -459,7 +494,10 @@ export default function App() {
         {connected && (
           <div style={{ padding: 16, overflow: "auto" }}>
             {loading && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 64, color: "var(--text-muted)" }}>Loading issues...</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: 64, color: "var(--text-muted)" }}>
+                <span className="spinner" />
+                Loading issues...
+              </div>
             )}
             {error && !loading && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 64, color: "#ef4444", fontSize: 14 }}>{error}</div>
