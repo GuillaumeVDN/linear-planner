@@ -497,6 +497,13 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                           }
                         }
 
+                        // "Ignored" stretches (below-start / unassigned / no-count) painted over
+                        // the in-progress bar in the pending color so they read as "not worked".
+                        const ignoredBars = issue.ignoredRanges
+                          .map((r) => getBarBounds(r.startDay, r.endDay))
+                          .filter((b): b is NonNullable<typeof b> => b !== null)
+                          .map((b) => ({ left: b.left - barLeft - 2, width: b.width }));
+
                         return (
                           <div
                             key={issue.id}
@@ -533,6 +540,9 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                               zIndex: 2,
                             }}
                           >
+                            {!issue.done && ignoredBars.map((b, idx) => (
+                              <div key={`ig-${idx}`} style={{ position: "absolute", left: b.left, top: 0, width: b.width, height: "100%", background: "var(--surface-hover)", pointerEvents: "none" }} />
+                            ))}
                             {grayedCols.map((relCol) => (
                               <div key={`g-${relCol}`} style={{ position: "absolute", left: relCol * DAY_WIDTH - 2, top: 0, width: DAY_WIDTH, height: "100%", background: "rgba(0,0,0,0.08)", pointerEvents: "none" }} />
                             ))}
@@ -597,6 +607,11 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
                     {b.stateName}: {b.days % 1 === 0 ? b.days : b.days.toFixed(1)} working day{b.days === 1 ? "" : "s"}
                   </div>
                 ))}
+              </div>
+            )}
+            {tooltipInfo.issue.noCountDays > 0 && (
+              <div style={{ color: "var(--text-muted)", fontSize: 11, marginTop: 2 }}>
+                Excluded: {tooltipInfo.issue.noCountDays % 1 === 0 ? tooltipInfo.issue.noCountDays : tooltipInfo.issue.noCountDays.toFixed(1)} working day{tooltipInfo.issue.noCountDays === 1 ? "" : "s"}
               </div>
             )}
             <div style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)", whiteSpace: "nowrap" }}>

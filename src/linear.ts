@@ -303,15 +303,94 @@ export interface StateTransition {
   toState: { name: string; type: string; position: number } | null;
 }
 
+/** A time window during which the issue had *some* assignee. `endIso === null` = still assigned now. */
+export interface AssignedInterval {
+  startIso: string;
+  endIso: string | null;
+}
+
+/** Sentinel for an assigned interval that was already open before the recorded history begins. */
+export const ASSIGNED_SINCE_BEGINNING = "0000-01-01T00:00:00.000Z";
+
+/**
+ * A manual "don't count these days" correction, entered as a Linear comment:
+ *   planner-no-count: 2026-06-10-AM, 2026-06-12-PM
+ * Both endpoints are inclusive (so the example excludes Jun 10 AM through Jun 12 PM).
+ */
+export interface NoCountRange {
+  startDate: string; // "YYYY-MM-DD"
+  startPm: boolean;
+  endDate: string;
+  endPm: boolean;
+}
+
+const NO_COUNT_TOKEN = /(\d{4}-\d{2}-\d{2})-(AM|PM)/gi;
+
+/** Parse every `planner-no-count:` directive out of a comment body into half-day ranges. */
+export function parseNoCountRanges(body: string): NoCountRange[] {
+  const ranges: NoCountRange[] = [];
+  for (const line of body.split(/\r?\n/)) {
+    const idx = line.toLowerCase().indexOf("planner-no-count:");
+    if (idx === -1) continue;
+    const rest = line.slice(idx + "planner-no-count:".length);
+    const tokens = [...rest.matchAll(NO_COUNT_TOKEN)].map((m) => ({ date: m[1], pm: m[2].toUpperCase() === "PM" }));
+    // Tokens come in (start, end) pairs; ignore a dangling token.
+    for (let i = 0; i + 1 < tokens.length; i += 2) {
+      ranges.push({ startDate: tokens[i].date, startPm: tokens[i].pm, endDate: tokens[i + 1].date, endPm: tokens[i + 1].pm });
+    }
+  }
+  return ranges;
+}
+
+export interface IssueHistory {
+  /** State changes only, chronological. */
+  transitions: Map<string, StateTransition[]>;
+  /** Periods each issue had an assignee, chronological. Empty/absent ⇒ assignee never changed. */
+  assignedIntervals: Map<string, AssignedInterval[]>;
+  /** Manual day-exclusion ranges parsed from `planner-no-count:` comments. */
+  noCount: Map<string, NoCountRange[]>;
+}
+
+type AssigneeRef = { id: string } | null;
+
+/** Build the "had an assignee" intervals from an issue's chronological history nodes. */
+function buildAssignedIntervals(
+  nodes: Array<{ createdAt: string; fromAssignee: AssigneeRef; toAssignee: AssigneeRef }>,
+): AssignedInterval[] {
+  // Only nodes that actually change the assignee matter (state-only changes report null/null).
+  const events = nodes.filter((n) => (n.fromAssignee?.id ?? null) !== (n.toAssignee?.id ?? null));
+  if (events.length === 0) return []; // assignee never changed → caller treats as "always as-is"
+
+  const intervals: AssignedInterval[] = [];
+  // State before the very first change tells us whether the issue started out assigned.
+  let assigned = events[0].fromAssignee != null;
+  let openStart: string | null = assigned ? ASSIGNED_SINCE_BEGINNING : null;
+  for (const e of events) {
+    const nowAssigned = e.toAssignee != null;
+    if (!assigned && nowAssigned) {
+      openStart = e.createdAt;
+    } else if (assigned && !nowAssigned) {
+      intervals.push({ startIso: openStart ?? ASSIGNED_SINCE_BEGINNING, endIso: e.createdAt });
+      openStart = null;
+    }
+    assigned = nowAssigned;
+  }
+  if (assigned) intervals.push({ startIso: openStart ?? ASSIGNED_SINCE_BEGINNING, endIso: null });
+  return intervals;
+}
+
 /**
  * Fetch the full state-transition history for a set of issues, including the position
  * of both the previous and next state. Used to accurately account for time spent in
  * each workflow state (so a ticket that bounces in and out of "In Progress" doesn't
- * accrue spurious days while it sat in "Waiting for info").
+ * accrue spurious days while it sat in "Waiting for info"). Also returns, per issue, the
+ * windows during which it had an assignee — time with nobody assigned isn't counted as work.
  */
-export async function fetchIssueStateHistory(issueIds: string[]): Promise<Map<string, StateTransition[]>> {
-  const result = new Map<string, StateTransition[]>();
-  if (issueIds.length === 0) return result;
+export async function fetchIssueStateHistory(issueIds: string[]): Promise<IssueHistory> {
+  const transitions = new Map<string, StateTransition[]>();
+  const assignedIntervals = new Map<string, AssignedInterval[]>();
+  const noCount = new Map<string, NoCountRange[]>();
+  if (issueIds.length === 0) return { transitions, assignedIntervals, noCount };
 
   for (let i = 0; i < issueIds.length; i += 5) {
     const batch = issueIds.slice(i, i + 5);
@@ -319,7 +398,7 @@ export async function fetchIssueStateHistory(issueIds: string[]): Promise<Map<st
     const aliases = batch
       .map(
         (_, idx) =>
-          `i${idx}: issue(id: $id${idx}) { id history(first: 100) { nodes { createdAt fromState { name type position } toState { name type position } } } }`,
+          `i${idx}: issue(id: $id${idx}) { id history(first: 100) { nodes { createdAt fromState { name type position } toState { name type position } fromAssignee { id } toAssignee { id } } } comments(first: 100) { nodes { body } } }`,
       )
       .join("\n");
 
@@ -327,22 +406,29 @@ export async function fetchIssueStateHistory(issueIds: string[]): Promise<Map<st
     batch.forEach((id, idx) => { variables[`id${idx}`] = id; });
 
     const data = await gql<
-      Record<string, { id: string; history: { nodes: Array<{ createdAt: string; fromState: StateTransition["fromState"]; toState: StateTransition["toState"] }> } }>
+      Record<string, {
+        id: string;
+        history: { nodes: Array<{ createdAt: string; fromState: StateTransition["fromState"]; toState: StateTransition["toState"]; fromAssignee: AssigneeRef; toAssignee: AssigneeRef }> };
+        comments: { nodes: Array<{ body: string }> };
+      }>
     >(`query(${params}) { ${aliases} }`, variables);
 
     for (const key of Object.keys(data)) {
       const issue = data[key];
-      if (!issue?.history?.nodes) continue;
+      if (!issue) continue;
       // Linear returns history newest-first — flip so callers can iterate chronologically.
-      const transitions = [...issue.history.nodes]
+      const chronological = [...(issue.history?.nodes ?? [])].reverse();
+      const stateTransitions = chronological
         .filter((n) => n.toState || n.fromState)
-        .reverse()
         .map((n) => ({ createdAt: n.createdAt, fromState: n.fromState, toState: n.toState }));
-      result.set(issue.id, transitions);
+      transitions.set(issue.id, stateTransitions);
+      assignedIntervals.set(issue.id, buildAssignedIntervals(chronological));
+      const ranges = (issue.comments?.nodes ?? []).flatMap((c) => parseNoCountRanges(c.body));
+      if (ranges.length > 0) noCount.set(issue.id, ranges);
     }
   }
 
-  return result;
+  return { transitions, assignedIntervals, noCount };
 }
 
 /**

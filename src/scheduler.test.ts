@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { scheduleIssues } from "./scheduler";
-import type { LinearIssue, LinearMilestone, LinearWorkflowState, StateTransition } from "./linear";
+import type { LinearIssue, LinearMilestone, LinearWorkflowState, StateTransition, AssignedInterval } from "./linear";
 
 // --- Helpers ---
 
@@ -27,7 +27,7 @@ function makeIssue(overrides: Partial<LinearIssue> & { id: string; identifier: s
     startedAt: null,
     completedAt: null,
     state: { name: "To do", type: "unstarted", color: "#ccc", position: 1 },
-    assignee: null,
+    assignee: { id: "u1", name: "Worker One", avatarUrl: null },
     projectMilestone: null,
     labels: { nodes: [] },
     relations: { nodes: [] },
@@ -492,6 +492,29 @@ describe("scheduleIssues", () => {
       expect(findIssue(result, "A-2")!.daysSpent).not.toBeNull(); // at start → counted
     });
 
+    it("an issue in a started state but with no assignee is not counted as in-progress", () => {
+      // Same started state, same startedAt — only difference is the missing assignee. An
+      // unassigned started issue isn't really being worked on, so it should behave like an
+      // unstarted issue: no accrued daysSpent and not pinned to its startedAt.
+      const issues = [
+        makeIssue({
+          id: "a", identifier: "A-1", estimate: 3,
+          startedAt: isoDate(MONDAY),
+          state: { name: "In Progress", type: "started", color: "#36f", position: 2 },
+          assignee: null,
+        }),
+        makeIssue({
+          id: "b", identifier: "A-2", estimate: 3,
+          startedAt: isoDate(MONDAY),
+          state: { name: "In Progress", type: "started", color: "#36f", position: 2 },
+          assignee: { id: "u1", name: "Worker One", avatarUrl: null },
+        }),
+      ];
+      const result = scheduleIssues(issues, 1, MONDAY, [], [], WORKFLOW_STATES);
+      expect(findIssue(result, "A-1")!.daysSpent).toBeNull(); // no assignee → not in-progress
+      expect(findIssue(result, "A-2")!.daysSpent).not.toBeNull(); // assigned → counted
+    });
+
     it("default start status (lowest started position) keeps legacy behaviour: every started issue counts", () => {
       const issues = [
         makeIssue({
@@ -579,6 +602,8 @@ describe("scheduleIssues", () => {
         expect(x.belowStartBreakdown.length).toBe(1);
         expect(x.belowStartBreakdown[0].stateName).toBe("Waiting for info");
         expect(x.belowStartBreakdown[0].days).toBeGreaterThan(0);
+        // The below-start stretch is also surfaced as an ignored range (painted pending on the bar).
+        expect(x.ignoredRanges.length).toBeGreaterThan(0);
       });
 
       it("does not overcount a calendar day that hosts multiple state transitions (FIN-592 regression)", () => {
@@ -620,6 +645,104 @@ describe("scheduleIssues", () => {
           const result = scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress", history);
           // Mon AM → Mon PM (1 half) + Mon PM → Mon PM (0 halves) + Mon PM → Tue PM-inclusive (3 halves) = 4 halves = 2 days.
           expect(findIssue(result, "X-1")!.daysSpent).toBe(2);
+        } finally {
+          globalThis.Date = realDate;
+        }
+      });
+
+      it("does not count active time that elapsed while the issue had no assignee", () => {
+        // The issue is active (In Progress) for the whole window, but was UNASSIGNED for the
+        // middle stretch. Those unassigned days must not accrue, even though it's assigned now.
+        const firstActive = isoDate(MONDAY); // Apr 7 (assigned)
+        const unassignedAt = isoDate(addDays(MONDAY, 1)); // Apr 8 — assignee removed
+        const reassignedAt = isoDate(addDays(MONDAY, 7)); // Apr 14 — assignee restored
+        const issues = [
+          makeIssue({
+            id: "x", identifier: "X-1", estimate: 5,
+            startedAt: firstActive,
+            state: { name: "In Progress", type: "started", color: "#36f", position: 2 },
+            assignee: { id: "u1", name: "Worker One", avatarUrl: null },
+          }),
+        ];
+        // Single uninterrupted active state across the whole period.
+        const history: Map<string, StateTransition[]> = new Map([
+          ["x", [{ createdAt: firstActive, fromState: stateOf(todo), toState: stateOf(inProgress) }]],
+        ]);
+        // Assigned Apr 7–8, unassigned Apr 8–14, assigned again Apr 14 onward.
+        const assigned: Map<string, AssignedInterval[]> = new Map([
+          ["x", [
+            { startIso: firstActive, endIso: unassignedAt },
+            { startIso: reassignedAt, endIso: null },
+          ]],
+        ]);
+        // Mock "now" to a fixed AM on Apr 15 (Tue) so the open-ended interval is bounded.
+        const fakeNow = new Date("2025-04-15T08:00:00.000Z");
+        const realDate = Date;
+        // @ts-expect-error - mock Date constructor
+        globalThis.Date = class extends realDate {
+          constructor(...args: ConstructorParameters<typeof realDate>) {
+            if (args.length === 0) return new realDate(fakeNow);
+            // @ts-expect-error - spread args
+            return new realDate(...args);
+          }
+          static now() { return fakeNow.getTime(); }
+        } as DateConstructor;
+        try {
+          const withGap = scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress", history, assigned);
+          const withoutGap = scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress", history);
+          const gapDays = findIssue(withGap, "X-1")!.daysSpent!;
+          const fullDays = findIssue(withoutGap, "X-1")!.daysSpent!;
+          // The unassigned Apr 8–13 stretch must be excluded.
+          expect(gapDays).toBeLessThan(fullDays);
+          // Assigned: Apr 7 (full day) + Apr 14 (full day) + Apr 15 AM-only (today is AM) = 2.5.
+          expect(gapDays).toBe(2.5);
+          // The unassigned stretch is surfaced as an ignored range for the gantt to paint pending.
+          expect(findIssue(withGap, "X-1")!.ignoredRanges.length).toBeGreaterThan(0);
+          expect(findIssue(withoutGap, "X-1")!.ignoredRanges).toEqual([]);
+        } finally {
+          globalThis.Date = realDate;
+        }
+      });
+
+      it("excludes days covered by a planner-no-count correction", () => {
+        // Active In Progress the whole window, but a correction excludes Apr 8 AM → Apr 9 PM
+        // (2 working days). Those days must drop out of daysSpent and surface as ignored.
+        const firstActive = isoDate(MONDAY); // Apr 7 (Mon)
+        const issues = [
+          makeIssue({
+            id: "x", identifier: "X-1", estimate: 5,
+            startedAt: firstActive,
+            state: { name: "In Progress", type: "started", color: "#36f", position: 2 },
+            assignee: { id: "u1", name: "Worker One", avatarUrl: null },
+          }),
+        ];
+        const history: Map<string, StateTransition[]> = new Map([
+          ["x", [{ createdAt: firstActive, fromState: stateOf(todo), toState: stateOf(inProgress) }]],
+        ]);
+        const noCount: Map<string, NoCountRange[]> = new Map([
+          ["x", [{ startDate: "2025-04-08", startPm: false, endDate: "2025-04-09", endPm: true }]],
+        ]);
+        const fakeNow = new Date("2025-04-10T08:00:00.000Z"); // Thu AM Paris
+        const realDate = Date;
+        // @ts-expect-error - mock Date constructor
+        globalThis.Date = class extends realDate {
+          constructor(...args: ConstructorParameters<typeof realDate>) {
+            if (args.length === 0) return new realDate(fakeNow);
+            // @ts-expect-error - spread args
+            return new realDate(...args);
+          }
+          static now() { return fakeNow.getTime(); }
+        } as DateConstructor;
+        try {
+          const corrected = scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress", history, new Map(), noCount);
+          const uncorrected = scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress", history);
+          const x = findIssue(corrected, "X-1")!;
+          // Uncorrected: Apr 7,8,9 full + Apr 10 AM = 3.5 days. Correction removes Apr 8–9 (2 days).
+          expect(findIssue(uncorrected, "X-1")!.daysSpent).toBe(3.5);
+          expect(x.daysSpent).toBe(1.5);
+          expect(x.noCountDays).toBe(2);
+          // The excluded stretch is reported as an ignored range for the gantt to paint.
+          expect(x.ignoredRanges.length).toBeGreaterThan(0);
         } finally {
           globalThis.Date = realDate;
         }
@@ -1115,6 +1238,34 @@ describe("scheduleIssues", () => {
       const labels = result.cycles.map((c) => c.label);
       expect(labels).toContain("Cycle 37");
       expect(labels).not.toContain("Cycle 38");
+    });
+  });
+
+  describe("bar end at a cycle boundary (FIN-594 regression)", () => {
+    // One cycle covering Apr 7–10 (Mon–Thu, working days 0–3), a cooldown, then a far-off
+    // second cycle. An issue finishing on the LAST working day of the first cycle must end
+    // there — not stretch across the cooldown to the next cycle's first day.
+    const CYCLES = [
+      { id: "c1", name: "Cycle 1", number: 1, startsAt: isoDate(MONDAY), endsAt: isoDate(addDays(MONDAY, 4)) }, // wd [0,4): Apr 7–10
+      { id: "c2", name: "Cycle 2", number: 2, startsAt: isoDate(addDays(MONDAY, 14)), endsAt: isoDate(addDays(MONDAY, 18)) }, // Apr 21–24
+    ];
+
+    it("ends on the last working day of the cycle, not at the end of the following cooldown", () => {
+      const issues = [
+        makeIssue({
+          id: "x", identifier: "X-1", estimate: 4,
+          startedAt: isoDate(MONDAY),
+          // Completed Thu Apr 10 in the afternoon — the cycle's final schedulable half-day.
+          completedAt: "2025-04-10T15:00:00.000Z",
+          state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+        }),
+      ];
+      const result = scheduleIssues(issues, 1, MONDAY, CYCLES, [], WORKFLOW_STATES);
+      const x = findIssue(result, "X-1")!;
+      // Apr 10 is calendar offset 3. The bar must end at/within Apr 11 (exclusive), i.e. it
+      // covers through Apr 10 — NOT jump to the next cycle (~offset 14, Apr 21).
+      expect(x.endDay).toBeLessThanOrEqual(4);
+      expect(x.endDay).toBeGreaterThan(3);
     });
   });
 

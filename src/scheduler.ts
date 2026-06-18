@@ -1,4 +1,5 @@
-import type { LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState, StateTransition } from "./linear";
+import type { LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState, StateTransition, AssignedInterval, NoCountRange } from "./linear";
+import { ASSIGNED_SINCE_BEGINNING } from "./linear";
 import { buildWorkingDayCalendar, dateToCalendarOffset, halfDayAdjustment, isAfterThreshold } from "./workingDays";
 
 /**
@@ -41,6 +42,14 @@ export interface ScheduledIssue {
    * the issue first reached an active state. Surfaced in the card tooltip.
    */
   belowStartBreakdown: Array<{ stateName: string; days: number }>;
+  /**
+   * Half-day calendar ranges within the bar that were NOT counted as working time —
+   * below-start states, unassigned stretches, or manual `planner-no-count:` corrections.
+   * Rendered in the pending color over the in-progress bar. Fractional day offsets (.5 = PM).
+   */
+  ignoredRanges: Array<{ startDay: number; endDay: number }>;
+  /** Manual day-exclusion ranges (working days) surfaced in the tooltip. */
+  noCountDays: number;
 }
 
 export interface CyclePeriod {
@@ -265,6 +274,8 @@ export function scheduleIssues(
   doneEndDates: Map<string, string> = new Map(),
   startStatusName: string = "",
   stateHistoryByIssue: Map<string, StateTransition[]> = new Map(),
+  assignedIntervalsByIssue: Map<string, AssignedInterval[]> = new Map(),
+  noCountByIssue: Map<string, NoCountRange[]> = new Map(),
 ): ScheduleResult {
   const { cycles: linearCycles, realIds: realCycleIds } = extendCyclesWithVirtual(linearCyclesInput);
   const cal = buildWorkingDayCalendar(startDate, 730);
@@ -300,6 +311,15 @@ export function scheduleIssues(
     return baseSi * HALF_PER_DAY + (isAfterThreshold(iso) ? 1 : 0);
   }
 
+  /** Half-day si index for a manual "YYYY-MM-DD" date + AM/PM half (used by no-count corrections). */
+  function siHalfForDateHalf(dateStr: string, pm: boolean): number {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const date = new Date(y, (m ?? 1) - 1, d ?? 1);
+    date.setHours(0, 0, 0, 0);
+    const wd = cal.toWorkingDay(dateToCalendarOffset(date, startDate));
+    return sched.toSchedulable(wd) * HALF_PER_DAY + (pm ? 1 : 0);
+  }
+
   const startedStates = workflowStates
     .filter((s) => s.type === "started")
     .sort((a, b) => a.position - b.position);
@@ -320,6 +340,9 @@ export function scheduleIssues(
   }
   function isActivelyInProgress(issue: LinearIssue): boolean {
     if (!issue.startedAt) return false;
+    // An issue in a started state but with nobody assigned isn't really being worked on —
+    // treat it like a not-started issue (no pinning, no accrued working days).
+    if (!issue.assignee) return false;
     if (startPosition === null) return true; // no workflow info → fall back to legacy behaviour
     return issue.state.type === "started" && issue.state.position >= startPosition;
   }
@@ -390,10 +413,12 @@ export function scheduleIssues(
    *
    * Uses segment-level halfDayAdjustment to be consistent with the rest of the scheduler.
    */
-  function computeStateAccounting(transitions: StateTransition[], endIso: string): {
+  function computeStateAccounting(transitions: StateTransition[], endIso: string, assignedIntervals: AssignedInterval[] = [], noCount: NoCountRange[] = []): {
     effectiveStartedAtIso: string;
     activeDays: number;
     belowStart: Array<{ stateName: string; days: number }>;
+    ignoredHalfRanges: Array<[number, number]>;
+    noCountHalves: number;
   } | null {
     if (startPosition === null) return null;
     const sp = startPosition;
@@ -405,12 +430,35 @@ export function scheduleIssues(
     if (firstActiveIdx === -1) return null;
     const effectiveStartedAtIso = transitions[firstActiveIdx].createdAt;
 
-    // Accumulate in half-day units to avoid double-counting calendar days that hold
-    // multiple transitions. Each segment [segStart, segEnd) covers the half-day units
-    // siHalfForIso(segStart) ≤ h < siHalfForIso(segEnd). The last segment, which ends at
-    // "now", *includes* the current half-day (we count today as worked when we're in it).
+    // Assigned windows in half-day space. Empty list ⇒ assignee never changed, so every half
+    // is treated as assigned (a single unbounded window), preserving the no-history behaviour.
+    const assignedWindows = assignedIntervals.length > 0
+      ? assignedIntervals.map((iv) => ({
+          startHalf: iv.startIso === ASSIGNED_SINCE_BEGINNING ? -Infinity : siHalfForIso(iv.startIso),
+          endHalf: iv.endIso === null ? Infinity : siHalfForIso(iv.endIso),
+        }))
+      : [{ startHalf: -Infinity, endHalf: Infinity }];
+    const isAssignedHalf = (h: number) => assignedWindows.some((w) => h >= w.startHalf && h < w.endHalf);
+
+    // Manual no-count corrections in half-day space; both endpoints inclusive.
+    const excludedWindows = noCount.map((r) => ({
+      lo: siHalfForDateHalf(r.startDate, r.startPm),
+      hi: siHalfForDateHalf(r.endDate, r.endPm) + 1,
+    }));
+    const isExcludedHalf = (h: number) => excludedWindows.some((w) => h >= w.lo && h < w.hi);
+
+    // Sweep each half-day from the effective start to "now". A half counts as worked only when
+    // its state is active (≥ start), someone is assigned, and it isn't manually excluded.
+    // Everything else inside the bar is "ignored" and surfaced (visually + in the tooltip).
     let activeHalves = 0;
+    let noCountHalves = 0;
     const belowStartByStateHalves = new Map<string, number>();
+    const ignoredHalfRanges: Array<[number, number]> = [];
+    const pushIgnored = (h: number) => {
+      const last = ignoredHalfRanges[ignoredHalfRanges.length - 1];
+      if (last && last[1] === h) last[1] = h + 1;
+      else ignoredHalfRanges.push([h, h + 1]);
+    };
 
     for (let i = firstActiveIdx; i < transitions.length; i++) {
       const segStartIso = transitions[i].createdAt;
@@ -421,18 +469,28 @@ export function scheduleIssues(
       if (!state) continue;
       const startHalf = siHalfForIso(segStartIso);
       const endHalf = isLastSeg ? siHalfForIso(segEndIso) + 1 : siHalfForIso(segEndIso);
-      const segHalves = Math.max(0, endHalf - startHalf);
+      const isActiveState = state.type === "started" && state.position >= sp;
+      const isBelowStart = state.type === "started" && state.position < sp;
 
-      if (state.type === "started" && state.position >= sp) {
-        activeHalves += segHalves;
-      } else if (state.type === "started" && state.position < sp) {
-        belowStartByStateHalves.set(state.name, (belowStartByStateHalves.get(state.name) ?? 0) + segHalves);
+      if (isBelowStart) {
+        belowStartByStateHalves.set(state.name, (belowStartByStateHalves.get(state.name) ?? 0) + Math.max(0, endHalf - startHalf));
+      }
+
+      for (let h = startHalf; h < endHalf; h++) {
+        if (isActiveState && isAssignedHalf(h) && !isExcludedHalf(h)) {
+          activeHalves++;
+        } else {
+          if (isActiveState && isExcludedHalf(h)) noCountHalves++;
+          pushIgnored(h);
+        }
       }
     }
 
     return {
       effectiveStartedAtIso,
       activeDays: activeHalves / HALF_PER_DAY,
+      ignoredHalfRanges,
+      noCountHalves,
       belowStart: Array.from(belowStartByStateHalves.entries()).map(([stateName, halves]) => ({ stateName, days: halves / HALF_PER_DAY })),
     };
   }
@@ -441,12 +499,12 @@ export function scheduleIssues(
   // the SAME "effective started" timestamp. Without this, the card's `startDay` would still
   // come from Linear's startedAt (e.g. June 3, when the issue first hit any started state)
   // while `startedAtRaw` would show the corrected effective start (e.g. June 12).
-  const accountingByIssue = new Map<string, { effectiveStartedAtIso: string; activeDays: number; belowStart: Array<{ stateName: string; days: number }> }>();
+  const accountingByIssue = new Map<string, { effectiveStartedAtIso: string; activeDays: number; belowStart: Array<{ stateName: string; days: number }>; ignoredHalfRanges: Array<[number, number]>; noCountHalves: number }>();
   for (const issue of issues) {
     if (!issue.startedAt || isDone(issue) || !isActivelyInProgress(issue)) continue;
     const history = stateHistoryByIssue.get(issue.id);
     if (!history || history.length === 0) continue;
-    const acct = computeStateAccounting(history, new Date().toISOString());
+    const acct = computeStateAccounting(history, new Date().toISOString(), assignedIntervalsByIssue.get(issue.id) ?? [], noCountByIssue.get(issue.id) ?? []);
     if (acct) accountingByIssue.set(issue.id, acct);
   }
   function effectiveStartedAtFor(issue: LinearIssue): string | null {
@@ -480,14 +538,26 @@ export function scheduleIssues(
     }
     const isLate = !isDone(issue) && issue.startedAt != null && daysSpent != null && hasEstimate && daysSpent > estimate;
     // startSi/endSi are in half-day units → convert to decimal calendar offsets (.0=AM, .5=PM).
-    let endDay = siHalfToFractionalCalendar(endSi);
+    // endSi is EXCLUSIVE; derive the bar end from the last *worked* half (endSi - 1) plus its
+    // half-width. Using siHalfToFractionalCalendar(endSi) directly would map the next schedulable
+    // slot — which, right before a cooldown/holiday gap, lands in the *next* cycle and visually
+    // stretches the bar across the gap.
+    const startDay = siHalfToFractionalCalendar(startSi);
+    let endDay = endSi > startSi ? siHalfToFractionalCalendar(endSi - 1) + 0.5 : siHalfToFractionalCalendar(endSi);
     if (isLate) {
       endDay = Math.max(endDay, dateToCalendarOffset(today, startDate) + 1);
     }
+    // Convert the half-day "ignored" ranges (below-start / unassigned / no-count) to fractional
+    // calendar offsets and clip them to the rendered bar so the gantt can paint them as pending.
+    const acct = accountingByIssue.get(issue.id);
+    const ignoredRanges = (acct?.ignoredHalfRanges ?? [])
+      .map(([lo, hi]) => ({ startDay: Math.max(startDay, siHalfToFractionalCalendar(lo)), endDay: Math.min(endDay, siHalfToFractionalCalendar(hi)) }))
+      .filter((r) => r.endDay > r.startDay);
+    const noCountDays = (acct?.noCountHalves ?? 0) / HALF_PER_DAY;
     return {
       id: issue.id, identifier: issue.identifier, title: issue.title, url: issue.url,
       duration, estimate,
-      startDay: siHalfToFractionalCalendar(startSi),
+      startDay,
       endDay,
       worker, milestone: issue.projectMilestone,
       stateName: issue.state.name, stateType: issue.state.type, stateColor: issue.state.color, stateProgress: getStateProgress(issue),
@@ -498,6 +568,8 @@ export function scheduleIssues(
       endedAtRaw: isDone(issue) ? (doneEndDateStr.get(issue.id) ?? null) : null,
       labels: issue.labels.nodes,
       belowStartBreakdown,
+      ignoredRanges,
+      noCountDays,
       blockedBy: Array.from(allBlockedBy.get(issue.id) ?? [])
         .map((bid) => {
           const b = issueMap.get(bid);

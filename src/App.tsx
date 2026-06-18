@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates, fetchIssueStateHistory, createBlockingRelation, deleteIssueRelation } from "./linear";
-import type { LinearProject, LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState, StateTransition } from "./linear";
+import type { LinearProject, LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState, StateTransition, AssignedInterval, NoCountRange } from "./linear";
 import { startLogin, handleOAuthCallback, getCallbackPath, isAuthenticated, clearTokens, logout, isWriteEnabled, setWriteEnabled, isAutoRefreshEnabled, setAutoRefreshEnabled } from "./auth";
 import { scheduleIssues } from "./scheduler";
 import type { ScheduleResult } from "./scheduler";
@@ -28,6 +28,8 @@ export default function App() {
   const [endStatusName, setEndStatusName] = useState("");
   const [doneEndDates, setDoneEndDates] = useState<Map<string, string>>(new Map());
   const [stateHistoryByIssue, setStateHistoryByIssue] = useState<Map<string, StateTransition[]>>(new Map());
+  const [assignedIntervalsByIssue, setAssignedIntervalsByIssue] = useState<Map<string, AssignedInterval[]>>(new Map());
+  const [noCountByIssue, setNoCountByIssue] = useState<Map<string, NoCountRange[]>>(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
@@ -70,16 +72,16 @@ export default function App() {
 
   const maxParallelism = useMemo(() => {
     if (projectIssues.length === 0) return 1;
-    const unlimited = scheduleIssues(projectIssues, projectIssues.length, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates, effectiveStartStatus, stateHistoryByIssue);
+    const unlimited = scheduleIssues(projectIssues, projectIssues.length, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates, effectiveStartStatus, stateHistoryByIssue, assignedIntervalsByIssue, noCountByIssue);
     return unlimited.usedWorkers;
-  }, [projectIssues, projectCycles, projectMilestones, workflowStates, chartStart, effectiveEndStatus, doneEndDates, effectiveStartStatus, stateHistoryByIssue]);
+  }, [projectIssues, projectCycles, projectMilestones, workflowStates, chartStart, effectiveEndStatus, doneEndDates, effectiveStartStatus, stateHistoryByIssue, assignedIntervalsByIssue, noCountByIssue]);
 
   const effectiveWorkers = Math.min(numWorkers, maxParallelism);
 
   const schedule: ScheduleResult | null = useMemo(() => {
     if (projectIssues.length === 0) return null;
-    return scheduleIssues(projectIssues, effectiveWorkers, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates, effectiveStartStatus, stateHistoryByIssue);
-  }, [projectIssues, projectCycles, projectMilestones, workflowStates, effectiveWorkers, chartStart, effectiveEndStatus, doneEndDates, effectiveStartStatus, stateHistoryByIssue]);
+    return scheduleIssues(projectIssues, effectiveWorkers, chartStart, projectCycles, projectMilestones, workflowStates, effectiveEndStatus, doneEndDates, effectiveStartStatus, stateHistoryByIssue, assignedIntervalsByIssue, noCountByIssue);
+  }, [projectIssues, projectCycles, projectMilestones, workflowStates, effectiveWorkers, chartStart, effectiveEndStatus, doneEndDates, effectiveStartStatus, stateHistoryByIssue, assignedIntervalsByIssue, noCountByIssue]);
 
   // Restore session on mount (or handle OAuth callback)
   useEffect(() => {
@@ -273,10 +275,12 @@ export default function App() {
         .map((i) => i.id);
       const history = inProgressIds.length > 0
         ? await fetchIssueStateHistory(inProgressIds)
-        : new Map<string, StateTransition[]>();
+        : { transitions: new Map<string, StateTransition[]>(), assignedIntervals: new Map<string, AssignedInterval[]>(), noCount: new Map<string, NoCountRange[]>() };
 
       setDoneEndDates(endDates);
-      setStateHistoryByIssue(history);
+      setStateHistoryByIssue(history.transitions);
+      setAssignedIntervalsByIssue(history.assignedIntervals);
+      setNoCountByIssue(history.noCount);
       setProjectIssues(issues);
       setProjectCycles(cycles);
       setProjectMilestones(milestones);
