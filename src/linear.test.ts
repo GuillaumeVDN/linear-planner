@@ -2,7 +2,14 @@ import { describe, it, expect } from "vitest";
 import { isPlannableIssue, parseNoCountRanges } from "./linear";
 
 function withLabels(...names: string[]) {
-  return { labels: { nodes: names.map((name) => ({ name, color: "#ccc" })) } };
+  return {
+    labels: { nodes: names.map((name) => ({ name, color: "#ccc" })) },
+    state: { name: "In Progress", type: "started", color: "#ccc", position: 1 },
+  };
+}
+
+function withState(name: string) {
+  return { labels: { nodes: [] }, state: { name, type: "started", color: "#ccc", position: 1 } };
 }
 
 describe("isPlannableIssue", () => {
@@ -20,6 +27,14 @@ describe("isPlannableIssue", () => {
 
   it("excludes issues with no-planner among other labels", () => {
     expect(isPlannableIssue(withLabels("bug", "no-planner"))).toBe(false);
+  });
+
+  it("excludes issues in the Duplicate state", () => {
+    expect(isPlannableIssue(withState("Duplicate"))).toBe(false);
+  });
+
+  it("includes issues in other states", () => {
+    expect(isPlannableIssue(withState("Done"))).toBe(true);
   });
 });
 

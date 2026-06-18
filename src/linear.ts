@@ -259,9 +259,14 @@ export async function fetchProjectIssues(projectId: string): Promise<LinearIssue
   return allIssues.filter(isPlannableIssue);
 }
 
-/** Issues tagged `no-planner` are excluded from the planner entirely. */
-export function isPlannableIssue(issue: Pick<LinearIssue, "labels">): boolean {
-  return !issue.labels.nodes.some((l) => l.name === "no-planner");
+/**
+ * Issues tagged `no-planner`, or sitting in a "Duplicate" workflow state, are
+ * excluded from the planner entirely.
+ */
+export function isPlannableIssue(issue: Pick<LinearIssue, "labels" | "state">): boolean {
+  if (issue.labels.nodes.some((l) => l.name === "no-planner")) return false;
+  if (issue.state.name === "Duplicate") return false;
+  return true;
 }
 
 /**
