@@ -24,12 +24,9 @@ interface GanttChartProps {
   showWeekends: boolean;
   showHolidays: boolean;
   showCooldown: boolean;
-  setShowWeekends: (v: boolean) => void;
-  setShowHolidays: (v: boolean) => void;
-  setShowCooldown: (v: boolean) => void;
 }
 
-export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown, setShowWeekends, setShowHolidays, setShowCooldown }: GanttChartProps) {
+export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown }: GanttChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltipInfo, setTooltipInfo] = useState<{ issue: ScheduledIssue; x: number; y: number } | null>(null);
   const [msHeaderHeights, setMsHeaderHeights] = useState<Record<string, number>>({});
@@ -78,12 +75,12 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
     for (const ms of schedule.milestones) {
       const msIssues = schedule.issues.filter((i) => i.milestone?.id === ms.id);
       if (msIssues.length === 0) continue;
-      groups.push({ milestoneId: ms.id, milestoneName: ms.name, workerRows: buildWorkerRows(msIssues), summary: buildMilestoneSummary(msIssues, schedule.startDate, schedule.configuredWorkers, schedule.cycles) });
+      groups.push({ milestoneId: ms.id, milestoneName: ms.name, workerRows: buildWorkerRows(msIssues), summary: buildMilestoneSummary(msIssues, schedule.startDate, schedule.configuredWorkers, schedule.cycles, false) });
     }
 
     const noMsIssues = schedule.issues.filter((i) => !i.milestone);
     if (noMsIssues.length > 0) {
-      groups.push({ milestoneId: null, milestoneName: "No milestone", workerRows: buildWorkerRows(noMsIssues), summary: buildMilestoneSummary(noMsIssues, schedule.startDate, schedule.configuredWorkers, schedule.cycles) });
+      groups.push({ milestoneId: null, milestoneName: "No milestone", workerRows: buildWorkerRows(noMsIssues), summary: buildMilestoneSummary(noMsIssues, schedule.startDate, schedule.configuredWorkers, schedule.cycles, false) });
     }
 
     return groups;
@@ -281,7 +278,6 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
 
   return (
     <div>
-      <Legend issues={schedule.issues} showOptions={{ showWeekends, setShowWeekends, showHolidays, setShowHolidays, showCooldown, setShowCooldown }} />
       {/* Scrollable chart */}
       <div
         ref={containerRef}
@@ -629,6 +625,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown,
         )}
       </div>
 
+      <Legend issues={schedule.issues} />
     </div>
   );
 }

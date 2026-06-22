@@ -1,4 +1,4 @@
-import { type CSSProperties, useMemo } from "react";
+import { useMemo } from "react";
 import type { ScheduledIssue } from "./scheduler";
 import { StatusCircle } from "./StatusCircle";
 import { BlockedIcon } from "./CardIcons";
@@ -6,33 +6,9 @@ import { BLOCKED_STRIPE, NO_ESTIMATE_BG, DONE_STRIPE } from "./cardStyle";
 
 interface LegendProps {
   issues: ScheduledIssue[];
-  showOptions?: {
-    showWeekends: boolean;
-    setShowWeekends: (v: boolean) => void;
-    showHolidays: boolean;
-    setShowHolidays: (v: boolean) => void;
-    showCooldown: boolean;
-    setShowCooldown: (v: boolean) => void;
-  };
-  /** Right-aligned tree-mode toggles (Include done issues, Draw cross-milestone deps). */
-  treeOptions?: {
-    includeDone: boolean;
-    setIncludeDone: (v: boolean) => void;
-    drawCrossMilestoneDeps?: boolean;
-    setDrawCrossMilestoneDeps?: (v: boolean) => void;
-  };
 }
 
-const checkboxLabelStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 4,
-  fontSize: 12,
-  color: "var(--text-muted)",
-  cursor: "pointer",
-};
-
-export function Legend({ issues, showOptions, treeOptions }: LegendProps) {
+export function Legend({ issues }: LegendProps) {
   const statuses = useMemo(() => {
     const seen = new Map<string, { name: string; type: string; color: string; progress: number }>();
     for (const issue of issues) {
@@ -70,41 +46,6 @@ export function Legend({ issues, showOptions, treeOptions }: LegendProps) {
         <div style={{ width: 24, height: 12, borderRadius: 2, background: `${DONE_STRIPE}, var(--surface-hover)`, border: "1px solid var(--border)" }} />
         <span>Done</span>
       </div>
-      {(showOptions || treeOptions) && <div style={{ flex: 1 }} />}
-      {showOptions && (
-        <>
-          <label style={checkboxLabelStyle}>
-            <input type="checkbox" checked={showOptions.showWeekends} onChange={(e) => showOptions.setShowWeekends(e.target.checked)} />
-            Show weekends
-          </label>
-          <label style={checkboxLabelStyle}>
-            <input type="checkbox" checked={showOptions.showHolidays} onChange={(e) => showOptions.setShowHolidays(e.target.checked)} />
-            Show holidays
-          </label>
-          <label style={checkboxLabelStyle}>
-            <input type="checkbox" checked={showOptions.showCooldown} onChange={(e) => showOptions.setShowCooldown(e.target.checked)} />
-            Show cooldown
-          </label>
-        </>
-      )}
-      {treeOptions && (
-        <>
-          {treeOptions.setDrawCrossMilestoneDeps && (
-            <label style={checkboxLabelStyle}>
-              <input
-                type="checkbox"
-                checked={treeOptions.drawCrossMilestoneDeps ?? false}
-                onChange={(e) => treeOptions.setDrawCrossMilestoneDeps!(e.target.checked)}
-              />
-              Draw dependencies between milestones
-            </label>
-          )}
-          <label style={checkboxLabelStyle}>
-            <input type="checkbox" checked={treeOptions.includeDone} onChange={(e) => treeOptions.setIncludeDone(e.target.checked)} />
-            Include done issues
-          </label>
-        </>
-      )}
     </div>
   );
 }

@@ -55,6 +55,11 @@ export function buildMilestoneSummary(
   startDate: Date,
   numWorkers: number = 1,
   cycles: CyclePeriod[] = [],
+  // The "ahead/behind/on time" progress lines compare against the configured number of
+  // workers in parallel. That comparison only makes sense globally (across all issues) —
+  // per-milestone it's misleading once people split their time across milestones. So
+  // callers can opt out of the status lines while keeping the counts.
+  includeStatus: boolean = true,
 ): MilestoneSummaryData {
   const count = msIssues.length;
   const empty: MilestoneSummaryData = { issueCount: `${count} issue${count !== 1 ? "s" : ""}`, totalDays: null, startedAt: null, targetDays: "", targetEnd: "", soFarLabel: null, soFarCount: null, soFarDays: null, soFarStatus: null, soFarColor: null, ongoingLabel: null, ongoingCount: null, ongoingStatus: null, ongoingColor: null };
@@ -106,7 +111,8 @@ export function buildMilestoneSummary(
     const actualElapsed = schedulableDaysBetween(minStart, maxEnd, startDate, cycles);
     const fmtActual = actualElapsed % 1 === 0 ? `${actualElapsed}` : actualElapsed.toFixed(1);
     const fmtTheoretical = theoreticalElapsed % 1 === 0 ? `${theoreticalElapsed}` : theoreticalElapsed.toFixed(1);
-    soFarLabel = "Completed";
+    const donePct = Math.round((msIssues.filter((i) => i.done).length / count) * 100);
+    soFarLabel = `Completed (${donePct}%)`;
     soFarCount = `${doneIssues.length} issue${doneIssues.length !== 1 ? "s" : ""} · ${fmtActual} / ~${fmtTheoretical} working days`;
     const diff = actualElapsed - theoreticalElapsed;
     const fmtAbsDiff = Math.abs(diff) % 1 === 0 ? `${Math.abs(diff)}` : Math.abs(diff).toFixed(1);
@@ -161,8 +167,12 @@ export function buildMilestoneSummary(
     startedAt,
     targetDays: unstartedStr,
     targetEnd: `End: ${endStr}`,
-    soFarLabel, soFarCount, soFarDays, soFarStatus, soFarColor,
-    ongoingLabel, ongoingCount, ongoingStatus, ongoingColor,
+    soFarLabel, soFarCount, soFarDays,
+    soFarStatus: includeStatus ? soFarStatus : null,
+    soFarColor: includeStatus ? soFarColor : null,
+    ongoingLabel, ongoingCount,
+    ongoingStatus: includeStatus ? ongoingStatus : null,
+    ongoingColor: includeStatus ? ongoingColor : null,
   };
 }
 
@@ -179,28 +189,28 @@ export function MilestoneHeader({ name, summary }: { name: string; summary: Mile
       </span>
       <span style={boldLineStyle}>{summary.issueCount}{summary.totalDays ? ` · ${summary.totalDays}` : ""}</span>
       {summary.startedAt && <span style={lineStyle}>{summary.startedAt}</span>}
-      {summary.soFarLabel && (
-        <>
-          <div style={spacerStyle} />
-          <span style={boldLineStyle}>{summary.soFarLabel}</span>
-          <span style={indentLineStyle}>{summary.soFarCount}</span>
-          <span style={{ ...indentLineStyle, color: summary.soFarColor ?? "var(--text-muted)", fontWeight: 600 }}>{summary.soFarStatus}</span>
-        </>
-      )}
       {summary.ongoingLabel && (
         <>
           <div style={spacerStyle} />
           <span style={boldLineStyle}>{summary.ongoingLabel}</span>
           <span style={indentLineStyle}>{summary.ongoingCount}</span>
-          <span style={{ ...indentLineStyle, color: summary.ongoingColor ?? "var(--text-muted)", fontWeight: 600 }}>{summary.ongoingStatus}</span>
+          {summary.ongoingStatus && <span style={{ ...indentLineStyle, color: summary.ongoingColor ?? "var(--text-muted)", fontWeight: 600 }}>{summary.ongoingStatus}</span>}
         </>
       )}
       {summary.targetEnd && (
         <>
           <div style={spacerStyle} />
-          <span style={boldLineStyle}>Unstarted</span>
+          <span style={boldLineStyle}>Remaining</span>
           {summary.targetDays && <span style={indentLineStyle}>{summary.targetDays}</span>}
           <span style={indentLineStyle}>{summary.targetEnd}</span>
+        </>
+      )}
+      {summary.soFarLabel && (
+        <>
+          <div style={spacerStyle} />
+          <span style={boldLineStyle}>{summary.soFarLabel}</span>
+          <span style={indentLineStyle}>{summary.soFarCount}</span>
+          {summary.soFarStatus && <span style={{ ...indentLineStyle, color: summary.soFarColor ?? "var(--text-muted)", fontWeight: 600 }}>{summary.soFarStatus}</span>}
         </>
       )}
     </>

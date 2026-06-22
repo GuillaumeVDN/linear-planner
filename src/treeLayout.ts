@@ -65,7 +65,8 @@ function buildParentsAndMilestones(schedule: ScheduleResult) {
   for (const ms of milestoneOrder) {
     const msIssues = schedule.issues.filter((i) => (i.milestone?.id ?? null) === ms.id);
     msIssuesMap.set(ms.id, msIssues);
-    summaries.set(ms.id, buildMilestoneSummary(msIssues, schedule.startDate, schedule.configuredWorkers, schedule.cycles));
+    // Per-milestone: no ahead/behind status (see buildMilestoneSummary).
+    summaries.set(ms.id, buildMilestoneSummary(msIssues, schedule.startDate, schedule.configuredWorkers, schedule.cycles, false));
   }
 
   return { parentsOf, milestoneOrder, msIssuesMap, summaries };
@@ -386,6 +387,7 @@ export async function layoutDependencyTreeGlobal(schedule: ScheduleResult): Prom
 
   const contentWidth = (layout.width ?? 0) + PADDING * 2;
   const contentHeight = (layout.height ?? 0) + PADDING * 2;
+  // Global tree has no milestone bands — the overall status lives in the GlobalStatus bar above.
   return { nodes: Array.from(nodeMap.values()), edges, bands: [], contentWidth, contentHeight };
 }
 

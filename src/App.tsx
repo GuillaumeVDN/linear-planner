@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties } from "react";
 import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates, fetchIssueStateHistory, createBlockingRelation, deleteIssueRelation } from "./linear";
 import type { LinearProject, LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState, StateTransition, AssignedInterval, NoCountRange } from "./linear";
 import { startLogin, handleOAuthCallback, getCallbackPath, isAuthenticated, clearTokens, logout, isWriteEnabled, setWriteEnabled, isAutoRefreshEnabled, setAutoRefreshEnabled } from "./auth";
@@ -10,7 +10,11 @@ import { BASE_PATH, getProjectIdFromUrl, navigateToProject } from "./routing";
 import { loadProjectSettings, saveProjectSettings, LEGACY_STORAGE_KEY, type Mode } from "./projectSettings";
 import { computeEffectiveEndStatus, sortStates } from "./workflowState";
 import { StatusSelect } from "./StatusSelect";
+import { GlobalStatus } from "./GlobalStatus";
+import { AutoWidthSelect } from "./AutoWidthSelect";
 import { centerCard, headerInputStyle, tabButtonStyle, stepperButtonStyle, buttonStyle } from "./appStyles";
+
+const modeSettingStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", cursor: "pointer" };
 
 export default function App() {
   const [connected, setConnected] = useState(false);
@@ -35,6 +39,7 @@ export default function App() {
   const [restoring, setRestoring] = useState(true);
   const [writeEnabled, setWriteEnabledState] = useState(isWriteEnabled());
   const [autoRefresh, setAutoRefreshState] = useState(isAutoRefreshEnabled());
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [projectIssues, setProjectIssues] = useState<LinearIssue[]>([]);
   const [projectCycles, setProjectCycles] = useState<LinearCycle[]>([]);
@@ -361,103 +366,99 @@ export default function App() {
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      <header style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "var(--surface)", display: "flex", flexDirection: "column", gap: 8 }}>
+      <header style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", background: "var(--surface)", display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <img src={`${BASE_PATH}/icon.png`} alt="" width={24} height={24} style={{ display: "block" }} />
           <h1 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Linear planner</h1>
           {connected && (
-            <>
-              <label
-                style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", cursor: "pointer", marginLeft: "auto" }}
-                title="Re-fetch the latest Linear data whenever this tab regains focus"
-              >
-                <input
-                  type="checkbox"
-                  checked={autoRefresh}
-                  onChange={(e) => handleToggleAutoRefresh(e.target.checked)}
-                />
-                Auto-refresh
-              </label>
-              <label
-                style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}
-                title="Allow drag-and-drop dependency edits (requires Linear write scope)"
-              >
-                <input
-                  type="checkbox"
-                  checked={writeEnabled}
-                  onChange={(e) => handleToggleWriteEnabled(e.target.checked)}
-                />
-                Allow writes
-              </label>
+            <div style={{ position: "relative", marginLeft: "auto" }}>
               <button
-                onClick={handleDisconnect}
-                style={{ ...buttonStyle, background: "transparent", color: "var(--text-muted)", padding: "4px 12px", fontSize: 12 }}
+                onClick={() => setSettingsOpen((o) => !o)}
+                title="Settings"
+                aria-label="Settings"
+                style={{ ...buttonStyle, background: settingsOpen ? "var(--surface-hover)" : "transparent", color: "var(--text-muted)", padding: "4px 8px", display: "flex", alignItems: "center" }}
               >
-                Disconnect
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
               </button>
-            </>
+              {settingsOpen && (
+                <>
+                  <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setSettingsOpen(false)} />
+                  <div
+                    style={{
+                      position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 100,
+                      background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8,
+                      boxShadow: "0 8px 24px rgba(0,0,0,0.35)", padding: 16, minWidth: 280,
+                      display: "flex", flexDirection: "column", gap: 14,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 13, color: "var(--text-muted)" }}>
+                      <span>People in parallel</span>
+                      <div style={{ display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
+                        <button onClick={() => setNumWorkers((n) => Math.max(1, n - 1))} disabled={numWorkers <= 1} style={stepperButtonStyle}>-</button>
+                        <span style={{ padding: "4px 12px", fontSize: 13, fontWeight: 600, minWidth: 32, textAlign: "center", background: "var(--bg)", color: "var(--text)" }}>
+                          {Math.min(numWorkers, maxParallelism)}
+                        </span>
+                        <button onClick={() => setNumWorkers((n) => Math.min(maxParallelism, n + 1))} disabled={numWorkers >= maxParallelism} style={stepperButtonStyle}>+</button>
+                      </div>
+                    </div>
+                    <div style={{ height: 1, background: "var(--border)" }} />
+                    {startedStates.length > 0 && (
+                      <>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 13, color: "var(--text-muted)" }}>
+                          <span>Start status</span>
+                          <StatusSelect states={startedStates} startedStates={startedStates} value={effectiveStartStatus} onChange={setStartStatusName} />
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 13, color: "var(--text-muted)" }}>
+                          <span>End status</span>
+                          <StatusSelect states={endStatusCandidates} startedStates={startedStates} value={effectiveEndStatus} onChange={setEndStatusName} />
+                        </div>
+                        <div style={{ height: 1, background: "var(--border)" }} />
+                      </>
+                    )}
+                    <label
+                      style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-muted)", cursor: "pointer" }}
+                      title="Re-fetch the latest Linear data whenever this tab regains focus"
+                    >
+                      <input type="checkbox" checked={autoRefresh} onChange={(e) => handleToggleAutoRefresh(e.target.checked)} />
+                      Auto-refresh
+                    </label>
+                    <label
+                      style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-muted)", cursor: "pointer" }}
+                      title="Allow drag-and-drop dependency edits (requires Linear write scope)"
+                    >
+                      <input type="checkbox" checked={writeEnabled} onChange={(e) => handleToggleWriteEnabled(e.target.checked)} />
+                      Allow writes
+                    </label>
+                    <div style={{ height: 1, background: "var(--border)" }} />
+                    <button
+                      onClick={() => { setSettingsOpen(false); handleDisconnect(); }}
+                      style={{ ...buttonStyle, background: "transparent", color: "var(--text-muted)", padding: "6px 12px", fontSize: 13 }}
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </div>
 
         {connected && (
           <>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <select value={selectedProjectId} onChange={(e) => handleProjectChange(e.target.value)} style={headerInputStyle}>
-                {!selectedProjectId && <option value="">Select a project…</option>}
-                {sortedProjects.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-              {schedule && (
-                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                  {schedule.issues.length} issues
-                  {(() => {
-                    const total = schedule.issues.reduce((s, i) => s + (i.hasEstimate ? i.estimate : 0), 0);
-                    const fmt = total % 1 === 0 ? `${total}` : total.toFixed(1);
-                    return ` · ${fmt} working day${total === 1 ? "" : "s"} for one person`;
-                  })()}
-                </span>
-              )}
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <AutoWidthSelect
+                value={selectedProjectId}
+                options={sortedProjects.map((p) => ({ value: p.id, label: p.name }))}
+                placeholder="Select a project…"
+                onChange={handleProjectChange}
+                style={headerInputStyle}
+                maxWidth={360}
+              />
             </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ display: "flex", borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
-                <button onClick={() => setMode("workers")} style={{ ...tabButtonStyle, background: mode === "workers" ? "var(--accent)" : "var(--bg)", color: mode === "workers" ? "#fff" : "var(--text-muted)" }}>
-                  Timeline
-                </button>
-                <button onClick={() => setMode("tree")} style={{ ...tabButtonStyle, background: mode === "tree" ? "var(--accent)" : "var(--bg)", color: mode === "tree" ? "#fff" : "var(--text-muted)" }}>
-                  Tree (per milestone)
-                </button>
-                <button onClick={() => setMode("treeGlobal")} style={{ ...tabButtonStyle, background: mode === "treeGlobal" ? "var(--accent)" : "var(--bg)", color: mode === "treeGlobal" ? "#fff" : "var(--text-muted)" }}>
-                  Tree (global)
-                </button>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 13, color: "var(--text-muted)", flexWrap: "wrap" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                Number of people working in parallel
-                <div style={{ display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
-                  <button onClick={() => setNumWorkers((n) => Math.max(1, n - 1))} disabled={numWorkers <= 1} style={stepperButtonStyle}>-</button>
-                  <span style={{ padding: "4px 12px", fontSize: 13, fontWeight: 600, minWidth: 32, textAlign: "center", background: "var(--bg)", color: "var(--text)" }}>
-                    {Math.min(numWorkers, maxParallelism)}
-                  </span>
-                  <button onClick={() => setNumWorkers((n) => Math.min(maxParallelism, n + 1))} disabled={numWorkers >= maxParallelism} style={stepperButtonStyle}>+</button>
-                </div>
-              </div>
-              {startedStates.length > 0 && (
-                <>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    Start status
-                    <StatusSelect states={startedStates} startedStates={startedStates} value={effectiveStartStatus} onChange={setStartStatusName} />
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    End status
-                    <StatusSelect states={endStatusCandidates} startedStates={startedStates} value={effectiveEndStatus} onChange={setEndStatusName} />
-                  </div>
-                </>
-              )}
-            </div>
+            {schedule && <GlobalStatus schedule={schedule} />}
           </>
         )}
       </header>
@@ -506,17 +507,65 @@ export default function App() {
             {error && !loading && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 64, color: "#ef4444", fontSize: 14 }}>{error}</div>
             )}
+            {!loading && !error && schedule && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
+                <div style={{ display: "flex", borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
+                  <button onClick={() => setMode("workers")} style={{ ...tabButtonStyle, background: mode === "workers" ? "var(--accent)" : "var(--bg)", color: mode === "workers" ? "#fff" : "var(--text-muted)" }}>
+                    Timeline
+                  </button>
+                  <button onClick={() => setMode("tree")} style={{ ...tabButtonStyle, background: mode === "tree" ? "var(--accent)" : "var(--bg)", color: mode === "tree" ? "#fff" : "var(--text-muted)" }}>
+                    Tree (per milestone)
+                  </button>
+                  <button onClick={() => setMode("treeGlobal")} style={{ ...tabButtonStyle, background: mode === "treeGlobal" ? "var(--accent)" : "var(--bg)", color: mode === "treeGlobal" ? "#fff" : "var(--text-muted)" }}>
+                    Tree (global)
+                  </button>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                  {mode === "workers" && (
+                    <>
+                      <label style={modeSettingStyle}>
+                        <input type="checkbox" checked={showWeekends} onChange={(e) => setShowWeekends(e.target.checked)} />
+                        Show weekends
+                      </label>
+                      <label style={modeSettingStyle}>
+                        <input type="checkbox" checked={showHolidays} onChange={(e) => setShowHolidays(e.target.checked)} />
+                        Show holidays
+                      </label>
+                      <label style={modeSettingStyle}>
+                        <input type="checkbox" checked={showCooldown} onChange={(e) => setShowCooldown(e.target.checked)} />
+                        Show cooldown
+                      </label>
+                    </>
+                  )}
+                  {mode === "tree" && (
+                    <>
+                      <label style={modeSettingStyle}>
+                        <input type="checkbox" checked={drawCrossMilestoneDeps} onChange={(e) => setDrawCrossMilestoneDeps(e.target.checked)} />
+                        Draw dependencies between milestones
+                      </label>
+                      <label style={modeSettingStyle}>
+                        <input type="checkbox" checked={includeDoneIssuesTree} onChange={(e) => setIncludeDoneIssuesTree(e.target.checked)} />
+                        Include done issues
+                      </label>
+                    </>
+                  )}
+                  {mode === "treeGlobal" && (
+                    <label style={modeSettingStyle}>
+                      <input type="checkbox" checked={includeDoneIssuesTreeGlobal} onChange={(e) => setIncludeDoneIssuesTreeGlobal(e.target.checked)} />
+                      Include done issues
+                    </label>
+                  )}
+                </div>
+              </div>
+            )}
             {!loading && !error && schedule && mode === "workers" && (
-              <GanttChart schedule={schedule} showWeekends={showWeekends} showHolidays={showHolidays} showCooldown={showCooldown} setShowWeekends={setShowWeekends} setShowHolidays={setShowHolidays} setShowCooldown={setShowCooldown} />
+              <GanttChart schedule={schedule} showWeekends={showWeekends} showHolidays={showHolidays} showCooldown={showCooldown} />
             )}
             {!loading && !error && schedule && mode === "tree" && (
               <DependencyTree
                 schedule={schedule}
                 variant={drawCrossMilestoneDeps ? "split" : "individual"}
                 includeDone={includeDoneIssuesTree}
-                setIncludeDone={setIncludeDoneIssuesTree}
-                drawCrossMilestoneDeps={drawCrossMilestoneDeps}
-                setDrawCrossMilestoneDeps={setDrawCrossMilestoneDeps}
                 writeEnabled={writeEnabled}
                 onCreateBlockingRelation={handleCreateBlockingRelation}
                 onDeleteRelation={handleDeleteRelation}
@@ -527,7 +576,6 @@ export default function App() {
                 schedule={schedule}
                 variant="global"
                 includeDone={includeDoneIssuesTreeGlobal}
-                setIncludeDone={setIncludeDoneIssuesTreeGlobal}
                 writeEnabled={writeEnabled}
                 onCreateBlockingRelation={handleCreateBlockingRelation}
                 onDeleteRelation={handleDeleteRelation}
