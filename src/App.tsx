@@ -16,6 +16,9 @@ import { centerCard, headerInputStyle, tabButtonStyle, stepperButtonStyle, butto
 
 const modeSettingStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", cursor: "pointer" };
 
+// Don't auto-refresh if the data was already refreshed within this window.
+const AUTO_REFRESH_THROTTLE_MS = 5 * 60 * 1000;
+
 export default function App() {
   const [connected, setConnected] = useState(false);
   const [projects, setProjects] = useState<LinearProject[]>([]);
@@ -49,6 +52,9 @@ export default function App() {
 
   const endStatusNameRef = useRef(endStatusName);
   endStatusNameRef.current = endStatusName;
+
+  // Timestamp of the last data load (manual or auto), used to throttle auto-refresh.
+  const lastRefreshAtRef = useRef(0);
 
   const sortedProjects = useMemo(
     () => [...projects].sort((a, b) => a.name.localeCompare(b.name)),
@@ -227,6 +233,7 @@ export default function App() {
     }
     setError(null);
     setLoading(true);
+    lastRefreshAtRef.current = Date.now();
     try {
       const [issues, cycles, milestones, states] = await Promise.all([
         fetchProjectIssues(projectId),
@@ -306,15 +313,17 @@ export default function App() {
     }
   }, [connected, selectedProjectId, loadProject]);
 
-  // Auto-refresh: re-fetch the latest Linear data when the tab regains focus.
+  // Auto-refresh: re-fetch the latest Linear data when the tab regains focus, but skip if
+  // we already (auto- or manually) refreshed within the last 5 minutes — focus events fire
+  // constantly while working, and re-fetching every time is more annoying than useful.
   const loadingRef = useRef(loading);
   loadingRef.current = loading;
   useEffect(() => {
     if (!connected || !autoRefresh || !selectedProjectId) return;
     const refresh = () => {
-      if (document.visibilityState === "visible" && !loadingRef.current) {
-        loadProject(selectedProjectId);
-      }
+      if (document.visibilityState !== "visible" || loadingRef.current) return;
+      if (Date.now() - lastRefreshAtRef.current < AUTO_REFRESH_THROTTLE_MS) return;
+      loadProject(selectedProjectId);
     };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
