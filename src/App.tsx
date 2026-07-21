@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties } from "react";
-import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates, fetchIssueStateHistory, createBlockingRelation, deleteIssueRelation } from "./linear";
+import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates, fetchIssueStateHistory, createBlockingRelation, deleteIssueRelation, addBlocksRelation, removeRelation } from "./linear";
 import type { LinearProject, LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState, StateTransition, AssignedInterval, NoCountRange } from "./linear";
 import { startLogin, handleOAuthCallback, getCallbackPath, isAuthenticated, clearTokens, logout, isWriteEnabled, setWriteEnabled, isAutoRefreshEnabled, setAutoRefreshEnabled } from "./auth";
 import { scheduleIssues } from "./scheduler";
@@ -363,14 +363,31 @@ export default function App() {
   }, [writeEnabled]);
 
   const handleCreateBlockingRelation = useCallback(async (blockerId: string, blockedId: string) => {
-    await createBlockingRelation(blockerId, blockedId);
-    // Refetch issues so the new relation shows up in the schedule and tree.
-    if (selectedProjectId) await loadProject(selectedProjectId);
+    let relationId: string;
+    try {
+      relationId = await createBlockingRelation(blockerId, blockedId);
+    } catch (err) {
+      // The write failed — fall back to a full refetch so the tree reflects the true state.
+      if (selectedProjectId) await loadProject(selectedProjectId);
+      throw err;
+    }
+    // Optimistic update: patch the local issue data in place instead of refetching everything.
+    // The schedule + tree are derived from projectIssues via useMemo, so the tree redraws without
+    // unmounting — the container keeps its scroll position.
+    setProjectIssues((prev) => addBlocksRelation(prev, blockerId, blockedId, relationId));
   }, [selectedProjectId, loadProject]);
 
   const handleDeleteRelation = useCallback(async (relationId: string) => {
-    await deleteIssueRelation(relationId);
-    if (selectedProjectId) await loadProject(selectedProjectId);
+    try {
+      await deleteIssueRelation(relationId);
+    } catch (err) {
+      // The delete failed — fall back to a full refetch so the tree reflects the true state.
+      if (selectedProjectId) await loadProject(selectedProjectId);
+      throw err;
+    }
+    // Optimistic update: drop the relation node from local issue data instead of refetching. The
+    // tree redraws from projectIssues without unmounting, keeping the scroll position.
+    setProjectIssues((prev) => removeRelation(prev, relationId));
   }, [selectedProjectId, loadProject]);
 
   return (

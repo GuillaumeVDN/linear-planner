@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { isPlannableIssue, parseNoCountRanges } from "./linear";
+import { isPlannableIssue, parseNoCountRanges, addBlocksRelation, removeRelation } from "./linear";
+import type { LinearIssue } from "./linear";
 
 function withLabels(...names: string[]) {
   return {
@@ -70,5 +71,88 @@ describe("parseNoCountRanges", () => {
 
   it("ignores a dangling unpaired token", () => {
     expect(parseNoCountRanges("planner-no-count: 2026-06-10-AM")).toEqual([]);
+  });
+});
+
+function makeIssue(overrides: Partial<LinearIssue> & { id: string; identifier: string }): LinearIssue {
+  return {
+    title: overrides.identifier,
+    url: `https://linear.app/${overrides.identifier}`,
+    estimate: null,
+    priority: 0,
+    priorityLabel: "No priority",
+    startedAt: null,
+    completedAt: null,
+    state: { name: "To do", type: "unstarted", color: "#ccc", position: 1 },
+    assignee: null,
+    projectMilestone: null,
+    labels: { nodes: [] },
+    relations: { nodes: [] },
+    ...overrides,
+  };
+}
+
+describe("addBlocksRelation", () => {
+  it("adds a blocks relation on the blocker issue pointing at the blocked one", () => {
+    const issues = [makeIssue({ id: "a", identifier: "A-1" }), makeIssue({ id: "b", identifier: "A-2" })];
+    const next = addBlocksRelation(issues, "a", "b", "rel-1");
+    const blocker = next.find((i) => i.id === "a")!;
+    expect(blocker.relations.nodes).toEqual([
+      { id: "rel-1", type: "blocks", relatedIssue: { id: "b", identifier: "A-2" } },
+    ]);
+    // The blocked issue is untouched (relation lives on the blocker, per the scheduler).
+    expect(next.find((i) => i.id === "b")!.relations.nodes).toEqual([]);
+  });
+
+  it("does not mutate the input array or issue objects", () => {
+    const issues = [makeIssue({ id: "a", identifier: "A-1" }), makeIssue({ id: "b", identifier: "A-2" })];
+    const next = addBlocksRelation(issues, "a", "b", "rel-1");
+    expect(issues[0].relations.nodes).toEqual([]);
+    expect(next).not.toBe(issues);
+    // Unaffected issues keep their identity (no needless re-render churn).
+    expect(next.find((i) => i.id === "b")).toBe(issues[1]);
+  });
+
+  it("is a no-op when the same blocks relation already exists", () => {
+    const issues = [
+      makeIssue({ id: "a", identifier: "A-1", relations: { nodes: [{ id: "rel-old", type: "blocks", relatedIssue: { id: "b", identifier: "A-2" } }] } }),
+      makeIssue({ id: "b", identifier: "A-2" }),
+    ];
+    const next = addBlocksRelation(issues, "a", "b", "rel-new");
+    expect(next.find((i) => i.id === "a")!.relations.nodes).toHaveLength(1);
+    expect(next.find((i) => i.id === "a")!.relations.nodes[0].id).toBe("rel-old");
+  });
+
+  it("falls back to an empty identifier when the blocked issue is absent", () => {
+    const issues = [makeIssue({ id: "a", identifier: "A-1" })];
+    const next = addBlocksRelation(issues, "a", "missing", "rel-1");
+    expect(next.find((i) => i.id === "a")!.relations.nodes[0].relatedIssue).toEqual({ id: "missing", identifier: "" });
+  });
+});
+
+describe("removeRelation", () => {
+  it("drops the relation node with the matching id", () => {
+    const issues = [
+      makeIssue({ id: "a", identifier: "A-1", relations: { nodes: [{ id: "rel-1", type: "blocks", relatedIssue: { id: "b", identifier: "A-2" } }] } }),
+      makeIssue({ id: "b", identifier: "A-2" }),
+    ];
+    const next = removeRelation(issues, "rel-1");
+    expect(next.find((i) => i.id === "a")!.relations.nodes).toEqual([]);
+  });
+
+  it("only copies issues that held the relation, leaving others by identity", () => {
+    const issues = [
+      makeIssue({ id: "a", identifier: "A-1", relations: { nodes: [{ id: "rel-1", type: "blocks", relatedIssue: { id: "b", identifier: "A-2" } }] } }),
+      makeIssue({ id: "b", identifier: "A-2" }),
+    ];
+    const next = removeRelation(issues, "rel-1");
+    expect(next.find((i) => i.id === "a")).not.toBe(issues[0]);
+    expect(next.find((i) => i.id === "b")).toBe(issues[1]);
+  });
+
+  it("is a no-op when no relation matches", () => {
+    const issues = [makeIssue({ id: "a", identifier: "A-1" })];
+    const next = removeRelation(issues, "nope");
+    expect(next[0]).toBe(issues[0]);
   });
 });

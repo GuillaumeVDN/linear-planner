@@ -270,6 +270,44 @@ export function isPlannableIssue(issue: Pick<LinearIssue, "labels" | "state">): 
 }
 
 /**
+ * Optimistically add a "blocks" relation to local issue data, mirroring what a refetch would
+ * produce. A "blocks" relation lives on the *blocker* issue with `relatedIssue` pointing at the
+ * blocked one (see the scheduler). Returns a new array; the blocker issue is duplicated with the
+ * extra relation node, everything else is returned as-is. A duplicate relation is a no-op.
+ */
+export function addBlocksRelation(
+  issues: LinearIssue[],
+  blockerId: string,
+  blockedId: string,
+  relationId: string,
+): LinearIssue[] {
+  const identifier = issues.find((i) => i.id === blockedId)?.identifier ?? "";
+  return issues.map((issue) => {
+    if (issue.id !== blockerId) return issue;
+    if (issue.relations.nodes.some((r) => r.type === "blocks" && r.relatedIssue.id === blockedId)) return issue;
+    return {
+      ...issue,
+      relations: {
+        ...issue.relations,
+        nodes: [...issue.relations.nodes, { id: relationId, type: "blocks", relatedIssue: { id: blockedId, identifier } }],
+      },
+    };
+  });
+}
+
+/**
+ * Optimistically drop an IssueRelation from local issue data by id. The node lives on whichever
+ * issue holds it, so it's filtered out everywhere. Only issues that actually held it are copied.
+ */
+export function removeRelation(issues: LinearIssue[], relationId: string): LinearIssue[] {
+  return issues.map((issue) =>
+    issue.relations.nodes.some((r) => r.id === relationId)
+      ? { ...issue, relations: { ...issue.relations, nodes: issue.relations.nodes.filter((r) => r.id !== relationId) } }
+      : issue,
+  );
+}
+
+/**
  * Delete a single IssueRelation by id. Requires the `write` OAuth scope.
  */
 export async function deleteIssueRelation(relationId: string): Promise<void> {
@@ -287,19 +325,23 @@ export async function deleteIssueRelation(relationId: string): Promise<void> {
 
 /**
  * Create a "blocks" relation: `blockerId` blocks `blockedId`. Requires the `write` OAuth scope.
+ * Returns the new IssueRelation id so callers can patch local state (and later delete it)
+ * without refetching.
  */
-export async function createBlockingRelation(blockerId: string, blockedId: string): Promise<void> {
+export async function createBlockingRelation(blockerId: string, blockedId: string): Promise<string> {
   // `type` is an `IssueRelationType` enum — must be a bare identifier, not a quoted string.
-  await gql<{ issueRelationCreate: { success: boolean } }>(
+  const data = await gql<{ issueRelationCreate: { success: boolean; issueRelation: { id: string } } }>(
     `
     mutation IssueRelationCreate($issueId: String!, $relatedIssueId: String!) {
       issueRelationCreate(input: { issueId: $issueId, relatedIssueId: $relatedIssueId, type: blocks }) {
         success
+        issueRelation { id }
       }
     }
   `,
     { issueId: blockerId, relatedIssueId: blockedId },
   );
+  return data.issueRelationCreate.issueRelation.id;
 }
 
 export interface StateTransition {
