@@ -72,14 +72,34 @@ async function gql<T>(query: string, variables: Record<string, unknown> = {}): P
 }
 
 export async function fetchProjects(): Promise<LinearProject[]> {
-  const data = await gql<{ projects: { nodes: LinearProject[] } }>(`
-    query {
-      projects(first: 100, orderBy: updatedAt) {
-        nodes { id name }
+  const allProjects: LinearProject[] = [];
+  let hasMore = true;
+  let cursor: string | undefined;
+
+  while (hasMore) {
+    const data = await gql<{
+      projects: {
+        nodes: LinearProject[];
+        pageInfo: { hasNextPage: boolean; endCursor: string };
+      };
+    }>(
+      `
+      query($after: String) {
+        projects(first: 250, after: $after, orderBy: updatedAt) {
+          nodes { id name }
+          pageInfo { hasNextPage endCursor }
+        }
       }
-    }
-  `);
-  return data.projects.nodes;
+    `,
+      { after: cursor }
+    );
+
+    allProjects.push(...data.projects.nodes);
+    hasMore = data.projects.pageInfo.hasNextPage;
+    cursor = data.projects.pageInfo.endCursor;
+  }
+
+  return allProjects;
 }
 
 export async function fetchProjectMilestones(projectId: string): Promise<LinearMilestone[]> {
