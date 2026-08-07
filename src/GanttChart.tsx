@@ -283,7 +283,13 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown 
       <div
         ref={containerRef}
         style={{
-          overflow: "auto",
+          // Horizontal only. The box height is content-driven, so it never needs to scroll
+          // vertically — but with `overflow: auto` on both axes the horizontal scrollbar eats
+          // into the client height, leaving a scrollbar-thin vertical overflow. That sliver
+          // showed a stub scrollbar and swallowed wheel events instead of scrolling the page.
+          // Same treatment as DependencyTree.
+          overflowX: "auto",
+          overflowY: "hidden",
           background: "var(--surface)",
           border: "1px solid var(--border)",
           position: "relative",
