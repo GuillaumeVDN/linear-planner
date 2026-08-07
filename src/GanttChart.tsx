@@ -86,7 +86,8 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown 
     return groups;
   }, [schedule, numWorkers]);
 
-  const totalCalendarDays = Math.max(schedule.totalDays, 1);
+  // Ceil guard at the allocation site: a fractional length makes `new Array()` throw.
+  const totalCalendarDays = Math.max(Math.ceil(schedule.totalDays), 1);
 
   // Build all calendar day info
   const allDays = useMemo(() => {

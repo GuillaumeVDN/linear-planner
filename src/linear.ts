@@ -30,6 +30,11 @@ export interface LinearIssue {
 export interface LinearProject {
   id: string;
   name: string;
+  /** Teams the project belongs to. A project can span several teams. */
+  teams: { nodes: Array<{ id: string; name: string; key: string }> };
+  /** False when the project holds no issue at all. Such projects are hidden from the picker
+   *  (nothing to plan) but stay in the list so a bookmarked URL still resolves. */
+  hasIssues: boolean;
 }
 
 export interface LinearMilestone {
@@ -74,6 +79,10 @@ async function gql<T>(query: string, variables: Record<string, unknown> = {}): P
 }
 
 export async function fetchProjects(): Promise<LinearProject[]> {
+  // `issues(first: 1)` is a cheap emptiness probe — Linear's connections expose no
+  // totalCount, so we just ask whether at least one issue comes back.
+  type ProjectNode = Omit<LinearProject, "hasIssues"> & { issues: { nodes: Array<{ id: string }> } };
+
   const allProjects: LinearProject[] = [];
   let hasMore = true;
   let cursor: string | undefined;
@@ -81,14 +90,19 @@ export async function fetchProjects(): Promise<LinearProject[]> {
   while (hasMore) {
     const data = await gql<{
       projects: {
-        nodes: LinearProject[];
+        nodes: ProjectNode[];
         pageInfo: { hasNextPage: boolean; endCursor: string };
       };
     }>(
       `
       query($after: String) {
-        projects(first: 250, after: $after, orderBy: updatedAt) {
-          nodes { id name }
+        projects(first: 100, after: $after, orderBy: updatedAt) {
+          nodes {
+            id
+            name
+            teams(first: 10) { nodes { id name key } }
+            issues(first: 1) { nodes { id } }
+          }
           pageInfo { hasNextPage endCursor }
         }
       }
@@ -96,7 +110,14 @@ export async function fetchProjects(): Promise<LinearProject[]> {
       { after: cursor }
     );
 
-    allProjects.push(...data.projects.nodes);
+    for (const node of data.projects.nodes) {
+      allProjects.push({
+        id: node.id,
+        name: node.name,
+        teams: node.teams,
+        hasIssues: node.issues.nodes.length > 0,
+      });
+    }
     hasMore = data.projects.pageInfo.hasNextPage;
     cursor = data.projects.pageInfo.endCursor;
   }

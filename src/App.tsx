@@ -11,8 +11,8 @@ import { loadProjectSettings, saveProjectSettings, LEGACY_STORAGE_KEY, type Mode
 import { computeEffectiveEndStatus, sortStates } from "./workflowState";
 import { StatusSelect } from "./StatusSelect";
 import { GlobalStatus } from "./GlobalStatus";
-import { AutoWidthSelect } from "./AutoWidthSelect";
-import { centerCard, headerInputStyle, tabButtonStyle, stepperButtonStyle, buttonStyle } from "./appStyles";
+import { ProjectSelect } from "./ProjectSelect";
+import { centerCard, tabButtonStyle, stepperButtonStyle, buttonStyle } from "./appStyles";
 
 const modeSettingStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", cursor: "pointer" };
 
@@ -56,10 +56,9 @@ export default function App() {
   // Timestamp of the last data load (manual or auto), used to throttle auto-refresh.
   const lastRefreshAtRef = useRef(0);
 
-  const sortedProjects = useMemo(
-    () => [...projects].sort((a, b) => a.name.localeCompare(b.name)),
-    [projects],
-  );
+  // Empty projects have nothing to plan, so they are not offered in the picker. They stay in
+  // `projects` though, so an existing /p/<id> URL for one still restores.
+  const selectableProjects = useMemo(() => projects.filter((p) => p.hasIssues), [projects]);
 
   const startedStates = useMemo(
     () => sortStates(workflowStates.filter((s) => s.type === "started")),
@@ -475,12 +474,11 @@ export default function App() {
         {connected && (
           <>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <AutoWidthSelect
+              <ProjectSelect
+                projects={selectableProjects}
                 value={selectedProjectId}
-                options={sortedProjects.map((p) => ({ value: p.id, label: p.name }))}
                 placeholder="Select a project…"
                 onChange={handleProjectChange}
-                style={headerInputStyle}
                 maxWidth={360}
               />
             </div>

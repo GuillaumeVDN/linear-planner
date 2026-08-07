@@ -940,6 +940,11 @@ export function scheduleIssues(
   }
 
   for (const c of cycles) totalDays = Math.max(totalDays, c.endDay);
+  // `endDay` carries half-day precision (.5 = PM), but totalDays is a CALENDAR DAY COUNT —
+  // the gantt allocates an array of that length. Round up so the last half-day still has a
+  // full column. Cycles usually mask this (their endDay is a whole day and normally sits past
+  // the last bar), so it only surfaced on projects with no cycles at all.
+  totalDays = Math.ceil(totalDays);
 
   const milestones: MilestoneInfo[] = [...projectMilestones].sort((a, b) => a.sortOrder - b.sortOrder);
 

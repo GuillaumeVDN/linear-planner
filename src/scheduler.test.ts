@@ -1127,6 +1127,24 @@ describe("scheduleIssues", () => {
       expect(a.startDay).toBeLessThanOrEqual(d.startDay);
     });
 
+    it("totalDays stays a whole calendar-day count when a bar ends on a PM half", () => {
+      // Regression: an issue finishing in the morning ends its bar mid-day (endDay = X.5).
+      // With no cycles to round it up, totalDays stayed fractional and the gantt blew up on
+      // `new Array(x.5)` — "invalid array length".
+      const issues = [
+        makeIssue({
+          id: "a", identifier: "A-1", estimate: 3,
+          startedAt: isoDate(MONDAY),
+          completedAt: isoDate(addDays(MONDAY, 2)),
+          state: { name: "Released", type: "completed", color: "#090", position: 5 },
+        }),
+      ];
+      const result = scheduleIssues(issues, 1, MONDAY, [], [], WORKFLOW_STATES, "Merged");
+      expect(findIssue(result, "A-1")!.endDay % 1).toBe(0.5); // guard: the repro still ends mid-day
+      expect(Number.isInteger(result.totalDays)).toBe(true);
+      expect(result.totalDays).toBeGreaterThanOrEqual(findIssue(result, "A-1")!.endDay);
+    });
+
     it("ties are broken by Linear's visible order: priority first, then sortOrder", () => {
       // No dependencies → every issue has 0 downstream, so the Linear view order decides.
       const issues = [
