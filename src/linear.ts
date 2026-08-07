@@ -10,6 +10,8 @@ export interface LinearIssue {
   estimate: number | null;
   priority: number;
   priorityLabel: string;
+  /** Linear's manual (drag-and-drop) order within a list. Lower = higher in the list. */
+  sortOrder: number;
   startedAt: string | null;
   completedAt: string | null;
   state: { name: string; type: string; color: string; position: number };
@@ -249,6 +251,7 @@ export async function fetchProjectIssues(projectId: string): Promise<LinearIssue
               estimate
               priority
               priorityLabel
+              sortOrder
               startedAt
               completedAt
               assignee { id name avatarUrl }

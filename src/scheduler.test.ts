@@ -24,6 +24,7 @@ function makeIssue(overrides: Partial<LinearIssue> & { id: string; identifier: s
     estimate: null,
     priority: 0,
     priorityLabel: "No priority",
+    sortOrder: 0,
     startedAt: null,
     completedAt: null,
     state: { name: "To do", type: "unstarted", color: "#ccc", position: 1 },
@@ -1124,6 +1125,20 @@ describe("scheduleIssues", () => {
       const d = findIssue(result, "A-4")!;
       // A should come before D (or at least not after)
       expect(a.startDay).toBeLessThanOrEqual(d.startDay);
+    });
+
+    it("ties are broken by Linear's visible order: priority first, then sortOrder", () => {
+      // No dependencies → every issue has 0 downstream, so the Linear view order decides.
+      const issues = [
+        makeIssue({ id: "none", identifier: "A-1", estimate: 1, priority: 0, priorityLabel: "No priority", sortOrder: 1 }),
+        makeIssue({ id: "low", identifier: "A-2", estimate: 1, priority: 4, priorityLabel: "Low", sortOrder: 100 }),
+        makeIssue({ id: "urgent-late", identifier: "A-3", estimate: 1, priority: 1, priorityLabel: "Urgent", sortOrder: 50 }),
+        makeIssue({ id: "urgent-early", identifier: "A-4", estimate: 1, priority: 1, priorityLabel: "Urgent", sortOrder: 10 }),
+      ];
+      const result = scheduleIssues(issues, 1, MONDAY, [], [], WORKFLOW_STATES);
+      const order = [...result.issues].sort((a, b) => a.startDay - b.startDay).map((i) => i.identifier);
+      // Urgent before Low, "No priority" last; within Urgent, lowest sortOrder first.
+      expect(order).toEqual(["A-4", "A-3", "A-2", "A-1"]);
     });
   });
 

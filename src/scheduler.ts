@@ -83,6 +83,22 @@ export interface ScheduleResult {
 const DEFAULT_ESTIMATE = 3;
 
 /**
+ * Order two issues the way they appear in our Linear views: priority first, then the
+ * manual drag-and-drop order.
+ *
+ * Linear encodes priority as 0 = None, 1 = Urgent, 2 = High, 3 = Medium, 4 = Low, and
+ * displays "No priority" LAST — so 0 has to be pushed to the end rather than sorted as-is.
+ * Within an equal priority, `sortOrder` ascending reproduces the list order.
+ */
+function compareLinearViewOrder(a: LinearIssue, b: LinearIssue): number {
+  const pa = a.priority === 0 ? Number.MAX_SAFE_INTEGER : a.priority;
+  const pb = b.priority === 0 ? Number.MAX_SAFE_INTEGER : b.priority;
+  if (pa !== pb) return pa - pb;
+  if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+  return a.identifier.localeCompare(b.identifier);
+}
+
+/**
  * Build a function that checks if an issue is effectively done.
  * Done = completed/canceled state type, OR "started" type with position >= "merged" position.
  */
@@ -726,11 +742,13 @@ export function scheduleIssues(
           result.push({ issue, earliestSi: earliest });
         }
       }
+      // Issues blocking more work go first (shortens the critical path); everything else
+      // falls back to the order the team actually sees in Linear.
       result.sort((a, b) => {
         const da = downstream.get(a.issue.id) ?? 0;
         const db = downstream.get(b.issue.id) ?? 0;
         if (da !== db) return db - da;
-        return a.issue.identifier.localeCompare(b.issue.identifier);
+        return compareLinearViewOrder(a.issue, b.issue);
       });
       return result;
     }
