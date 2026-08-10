@@ -82,6 +82,7 @@ export function ProjectSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [activeTeamId, setActiveTeamId] = useState<string | null>(null);
+  const [hoveredProjectId, setHoveredProjectId] = useState<string | null>(null);
   const [width, setWidth] = useState<number | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLSpanElement>(null);
@@ -224,9 +225,15 @@ export function ProjectSelect({
                     onChange(project.id);
                     setOpen(false);
                   }}
+                  // The team rows get their highlight from `activeTeamId`; project rows have no
+                  // such state, so track the hovered one explicitly (inline styles can't :hover).
+                  onMouseEnter={() => setHoveredProjectId(project.id)}
+                  onMouseLeave={() => setHoveredProjectId((id) => (id === project.id ? null : id))}
+                  onFocus={() => setHoveredProjectId(project.id)}
+                  onBlur={() => setHoveredProjectId((id) => (id === project.id ? null : id))}
                   style={{
                     ...rowStyle,
-                    background: isSelected ? "var(--surface-hover)" : "transparent",
+                    background: isSelected || hoveredProjectId === project.id ? "var(--surface-hover)" : "transparent",
                     fontWeight: isSelected ? 600 : 400,
                     whiteSpace: "normal",
                   }}
