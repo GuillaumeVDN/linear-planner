@@ -372,6 +372,23 @@ export function scheduleIssues(
     return (idx + 1) / (startedStates.length + 1);
   }
 
+  // Milestone scheduling order: Linear's milestone order, then the no-milestone bucket.
+  // Milestones seen only on issues (not in `projectMilestones`) are folded in by their own
+  // sortOrder — otherwise their issues land in a bucket phase 2 never visits and vanish.
+  const msSortOrder = new Map<string, number>();
+  for (const m of projectMilestones) msSortOrder.set(m.id, m.sortOrder);
+  for (const issue of issues) {
+    const m = issue.projectMilestone;
+    if (m && !msSortOrder.has(m.id)) msSortOrder.set(m.id, m.sortOrder);
+  }
+  const msOrder: Array<string | null> = [
+    ...Array.from(msSortOrder.entries()).sort((a, b) => a[1] - b[1]).map(([id]) => id),
+    null,
+  ];
+  const msRank = new Map<string | null, number>();
+  msOrder.forEach((id, i) => msRank.set(id, i));
+  const rankOf = (issue: LinearIssue) => msRank.get(issue.projectMilestone?.id ?? null) ?? msOrder.length - 1;
+
   // Build dependency graphs:
   // - blockedBy: for scheduling (ignores done blockers)
   // - allBlockedBy: for display (all relations, including done blockers)
@@ -387,12 +404,18 @@ export function scheduleIssues(
   }
   for (const issue of issues) {
     for (const rel of issue.relations.nodes) {
-      if (rel.type === "blocks") {
-        const targetId = rel.relatedIssue.id;
-        if (allBlockedBy.has(targetId)) allBlockedBy.get(targetId)!.add(issue.id);
-        if (!isDone(issue) && blockedBy.has(targetId)) blockedBy.get(targetId)!.add(issue.id);
-        relationIdByPair.set(pairKey(targetId, issue.id), rel.id);
-      }
+      if (rel.type !== "blocks") continue;
+      const targetId = rel.relatedIssue.id;
+      if (allBlockedBy.has(targetId)) allBlockedBy.get(targetId)!.add(issue.id);
+      relationIdByPair.set(pairKey(targetId, issue.id), rel.id);
+      if (isDone(issue) || !blockedBy.has(targetId)) continue;
+      // Milestones are scheduled one after another behind a hard barrier, so a blocker sitting
+      // in a LATER milestone can never be satisfied in time. Keep the relation for display, but
+      // leave it out of the scheduling graph — otherwise the blocked issue never becomes ready
+      // and drops out of the plan entirely.
+      const target = issueMap.get(targetId);
+      if (target && rankOf(issue) > rankOf(target)) continue;
+      blockedBy.get(targetId)!.add(issue.id);
     }
   }
 
@@ -701,11 +724,6 @@ export function scheduleIssues(
     unpinnedByMs.get(msId)!.push(issue);
   }
 
-  const msOrder: Array<string | null> = [
-    ...projectMilestones.sort((a, b) => a.sortOrder - b.sortOrder).map((m) => m.id),
-    null,
-  ];
-
   let milestoneBarrier = 0;
 
   function scheduleIssueOnWorker(issue: LinearIssue, worker: number, startSi: number) {
@@ -838,6 +856,23 @@ export function scheduleIssues(
       } else {
         break;
       }
+    }
+
+    // Safety net: whatever is still unscheduled here could not be made ready (dependency cycle,
+    // or a blocker that never resolved) and would otherwise be dropped from the plan without a
+    // trace. Place it on the soonest-free worker instead — a wrong date beats a missing issue.
+    for (const issue of msIssues) {
+      if (!msRemaining.has(issue.id)) continue;
+      let earliest = Math.max(milestoneBarrier, todaySi);
+      for (const bid of blockedBy.get(issue.id) ?? []) {
+        earliest = Math.max(earliest, endSiMap.get(bid) ?? 0);
+      }
+      let w = 0;
+      for (let i = 1; i < configuredNumWorkers; i++) {
+        if (workerFreeAtSi[i] < workerFreeAtSi[w]) w = i;
+      }
+      scheduleIssueOnWorker(issue, w, Math.max(workerFreeAtSi[w], earliest));
+      msRemaining.delete(issue.id);
     }
 
     for (const issue of msIssues) {

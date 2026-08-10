@@ -978,6 +978,43 @@ describe("scheduleIssues", () => {
       const b = findIssue(result, "A-2")!;
       expect(b.startDay).toBeGreaterThanOrEqual(a.endDay);
     });
+
+    it("keeps an issue blocked by a LATER milestone instead of dropping it", () => {
+      // Regression: milestones run behind a hard barrier, so a blocker in a later milestone can
+      // never be scheduled first. The blocked issue therefore never became "ready" and silently
+      // disappeared from the plan (missing from both the gantt and the dependency tree).
+      const ms1: LinearMilestone = { id: "ms1", name: "Phase 1", sortOrder: 1 };
+      const ms2: LinearMilestone = { id: "ms2", name: "Phase 2", sortOrder: 2 };
+      const issues = [
+        makeIssue({
+          id: "blocked", identifier: "A-1", estimate: 1,
+          projectMilestone: { id: "ms1", name: "Phase 1", sortOrder: 1 },
+        }),
+        makeIssue({
+          id: "blocker", identifier: "A-2", estimate: 1,
+          projectMilestone: { id: "ms2", name: "Phase 2", sortOrder: 2 },
+          relations: { nodes: [{ id: "r1", type: "blocks", relatedIssue: { id: "blocked", identifier: "A-1" } }] },
+        }),
+      ];
+      const result = scheduleIssues(issues, 1, MONDAY, [], [ms1, ms2], WORKFLOW_STATES);
+      const blocked = findIssue(result, "A-1");
+      expect(blocked).toBeDefined();
+      // The relation is dropped from scheduling but still shown on the card.
+      expect(blocked!.blockedBy.map((b) => b.identifier)).toEqual(["A-2"]);
+    });
+
+    it("keeps issues whose milestone is missing from the project milestone list", () => {
+      // Phase 2 walks a fixed bucket order; a milestone known only to the issues would leave
+      // its bucket unvisited and its issues unscheduled.
+      const issues = [
+        makeIssue({
+          id: "a", identifier: "A-1", estimate: 2,
+          projectMilestone: { id: "ghost", name: "Unlisted", sortOrder: 5 },
+        }),
+      ];
+      const result = scheduleIssues(issues, 1, MONDAY, [], [], WORKFLOW_STATES);
+      expect(findIssue(result, "A-1")).toBeDefined();
+    });
   });
 
   describe("end status configuration", () => {
