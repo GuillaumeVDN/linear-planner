@@ -32,6 +32,43 @@ function makeScheduledIssue(overrides: Partial<ScheduledIssue> & { id: string; i
 }
 
 describe("buildMilestoneSummary", () => {
+  describe("ongoing is expressed in the same unit as the other lines", () => {
+    it("divides ongoing spent and estimate by the worker count", () => {
+      const issues = [
+        makeScheduledIssue({
+          id: "a", identifier: "A-1", estimate: 4, daysSpent: 3,
+          startDay: 0, endDay: 4, stateType: "started",
+        }),
+        makeScheduledIssue({
+          id: "b", identifier: "A-2", estimate: 6, daysSpent: 5,
+          startDay: 0, endDay: 6, stateType: "started",
+        }),
+      ];
+      // 8 days spent / 10 estimated across 2 workers → 4 / ~5, not 8 / ~10.
+      const summary = buildMilestoneSummary(issues, MONDAY, 2);
+      expect(summary.ongoingCount).toBe("2 issues · 4 / ~5 working days");
+      expect(summary.ongoingStatus).toBe("On time");
+    });
+
+    it("reports the behind-schedule gap in the same divided unit", () => {
+      const issues = [
+        makeScheduledIssue({
+          id: "a", identifier: "A-1", estimate: 2, daysSpent: 5,
+          startDay: 0, endDay: 5, stateType: "started",
+        }),
+        makeScheduledIssue({
+          id: "b", identifier: "A-2", estimate: 2, daysSpent: 5,
+          startDay: 0, endDay: 5, stateType: "started",
+        }),
+      ];
+      // 10 spent vs 4 estimated over 2 workers → 5 / ~2, so 3 days behind (not 6).
+      const summary = buildMilestoneSummary(issues, MONDAY, 2);
+      expect(summary.ongoingCount).toBe("2 issues · 5 / ~2 working days");
+      expect(summary.ongoingStatus).toBe("3 days behind");
+      expect(summary.ongoingColor).toBe("#f97316");
+    });
+  });
+
   describe("completed status compares wall-clock elapsed working days vs estimate/workers", () => {
     it("4 parallel issues, 2 workers — actual wall-clock slightly ahead of theoretical schedule", () => {
       const issues = [

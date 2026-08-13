@@ -33,6 +33,37 @@ function schedulableDaysBetween(
   return count;
 }
 
+/**
+ * Wall-clock working days actually spanned by a set of bars: first start → last end.
+ * Idle stretches and overlaps are included — this is elapsed time, not summed effort.
+ */
+export function elapsedWorkingDays(issues: ScheduledIssue[], startDate: Date, cycles: CyclePeriod[]): number {
+  if (issues.length === 0) return 0;
+  const minStart = Math.min(...issues.map((i) => i.startDay));
+  const maxEnd = Math.max(...issues.map((i) => i.endDay));
+  return schedulableDaysBetween(minStart, maxEnd, startDate, cycles);
+}
+
+/**
+ * Wall-clock working days the same issues WOULD take scheduled cleanly on `numWorkers`,
+ * respecting the dependencies that exist within the set and ignoring their real Linear
+ * dates. Compared against `elapsedWorkingDays`, this rewards extra parallelism and accounts
+ * for dependency chains that cap the achievable wall-clock.
+ */
+export function theoreticalWorkingDays(issues: ScheduledIssue[], numWorkers: number): number {
+  const idByIdentifier = new Map(issues.map((i) => [i.identifier, i.id]));
+  return theoreticalSchedule(
+    issues.map((i) => ({
+      id: i.id,
+      estimate: i.estimate,
+      blockedBy: i.blockedBy
+        .map((b) => idByIdentifier.get(b.identifier))
+        .filter((id): id is string => !!id),
+    })),
+    Math.max(1, numWorkers),
+  );
+}
+
 export interface MilestoneSummaryData {
   issueCount: string;
   totalDays: string | null;
@@ -93,22 +124,8 @@ export function buildMilestoneSummary(
 
   const doneIssues = estimatedIssues.filter((i) => i.done);
   if (startedIssues.length > 0 && doneIssues.length > 0) {
-    // Theoretical schedule: how long the done issues WOULD take if scheduled cleanly
-    // with W workers respecting dependencies (and ignoring their real Linear dates).
-    // Compared against actual wall-clock elapsed, this rewards extra parallelism
-    // and accounts for dependency chains that constrain achievable wall-clock.
-    const doneIdByIdentifier = new Map(doneIssues.map((i) => [i.identifier, i.id]));
-    const theoreticalInput = doneIssues.map((i) => ({
-      id: i.id,
-      estimate: i.estimate,
-      blockedBy: i.blockedBy
-        .map((b) => doneIdByIdentifier.get(b.identifier))
-        .filter((id): id is string => !!id),
-    }));
-    const theoreticalElapsed = theoreticalSchedule(theoreticalInput, w);
-    const minStart = Math.min(...doneIssues.map((i) => i.startDay));
-    const maxEnd = Math.max(...doneIssues.map((i) => i.endDay));
-    const actualElapsed = schedulableDaysBetween(minStart, maxEnd, startDate, cycles);
+    const theoreticalElapsed = theoreticalWorkingDays(doneIssues, w);
+    const actualElapsed = elapsedWorkingDays(doneIssues, startDate, cycles);
     const fmtActual = actualElapsed % 1 === 0 ? `${actualElapsed}` : actualElapsed.toFixed(1);
     const fmtTheoretical = theoreticalElapsed % 1 === 0 ? `${theoreticalElapsed}` : theoreticalElapsed.toFixed(1);
     const donePct = Math.round((msIssues.filter((i) => i.done).length / count) * 100);
@@ -139,12 +156,14 @@ export function buildMilestoneSummary(
     const totalOngoingEstimate = ongoingIssues.reduce((s, i) => s + i.estimate, 0);
     const allOngoingCount = msIssues.filter((i) => !i.done && i.daysSpent != null).length;
     ongoingLabel = "Ongoing";
-    const fmtSpentOngoing = totalSpent % 1 === 0 ? `${totalSpent}` : totalSpent.toFixed(1);
-    ongoingCount = `${allOngoingCount} issue${allOngoingCount !== 1 ? "s" : ""} · ${fmtSpentOngoing} / ~${totalOngoingEstimate} working days`;
-    const diff = totalSpent - totalOngoingEstimate;
+    // Per-person days divided by W, like the total and remaining lines — otherwise this block
+    // reads in a different unit from the rest of the bar and the figures refuse to add up.
+    ongoingCount = `${allOngoingCount} issue${allOngoingCount !== 1 ? "s" : ""} · ${fmtDays(totalSpent)} / ~${fmtDays(totalOngoingEstimate)} working days`;
+    const diff = (totalSpent - totalOngoingEstimate) / w;
     if (diff > 0) {
       ongoingColor = "#f97316";
-      ongoingStatus = `${diff} day${diff !== 1 ? "s" : ""} behind`;
+      const fmtDiff = diff % 1 === 0 ? `${diff}` : diff.toFixed(1);
+      ongoingStatus = `${fmtDiff} day${diff !== 1 ? "s" : ""} behind`;
     } else {
       ongoingColor = "#15803d";
       ongoingStatus = "On time";

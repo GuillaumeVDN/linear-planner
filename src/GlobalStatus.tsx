@@ -1,6 +1,6 @@
 import { useMemo, type CSSProperties } from "react";
 import type { ScheduleResult } from "./scheduler";
-import { buildMilestoneSummary } from "./MilestoneHeader";
+import { buildMilestoneSummary, elapsedWorkingDays, theoreticalWorkingDays } from "./MilestoneHeader";
 
 // Match the milestone headers: orange, uppercase, tracked-out.
 const titleStyle: CSSProperties = { fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--iteration-line)", whiteSpace: "nowrap" };
@@ -23,15 +23,19 @@ export function GlobalStatus({ schedule }: { schedule: ScheduleResult }) {
     const summary = buildMilestoneSummary(issues, schedule.startDate, schedule.configuredWorkers, schedule.cycles, true);
     const result: Section[] = [];
 
-    // Global: issue count + overall working-days progress (spent / estimate), then started.
+    // Global: issue count + overall progress, in the SAME wall-clock terms as the Completed
+    // section — elapsed days so far against the schedule the whole project would ideally take
+    // with W workers. Summing per-issue days instead would mix effort with elapsed time and
+    // give a number that cannot be reconciled with Completed's.
     const count = issues.length;
-    const totalEstimate = issues.filter((i) => i.hasEstimate).reduce((s, i) => s + i.estimate, 0);
-    const totalSpent = issues.reduce((s, i) => s + (i.daysSpent ?? 0), 0);
-    // Working days divided by the people count, like the other sections (≈ wall-clock with N in parallel).
     const w = Math.max(1, schedule.configuredWorkers);
-    const fmtDays = (v: number) => { const d = v / w; return d % 1 === 0 ? `${d}` : d.toFixed(1); };
+    const worked = issues.filter((i) => i.daysSpent != null);
+    const estimated = issues.filter((i) => i.hasEstimate);
+    const actualElapsed = elapsedWorkingDays(worked, schedule.startDate, schedule.cycles);
+    const theoreticalElapsed = theoreticalWorkingDays(estimated, w);
+    const fmt = (v: number) => (v % 1 === 0 ? `${v}` : v.toFixed(1));
     const globalLines: Section["lines"] = [
-      { text: `${count} issue${count !== 1 ? "s" : ""} · ${fmtDays(totalSpent)} / ~${fmtDays(totalEstimate)} working days` },
+      { text: `${count} issue${count !== 1 ? "s" : ""} · ${fmt(actualElapsed)} / ~${fmt(theoreticalElapsed)} working days` },
     ];
     if (summary.startedAt) globalLines.push({ text: summary.startedAt });
     result.push({ title: "Global", lines: globalLines });
