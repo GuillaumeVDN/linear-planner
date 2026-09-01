@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPlannableIssue, parseNoCountRanges, addBlocksRelation, removeRelation } from "./linear";
+import { isPlannableIssue, parseNoCountRanges, endDateFromTransitions, addBlocksRelation, removeRelation } from "./linear";
 import type { LinearIssue } from "./linear";
 
 function withLabels(...names: string[]) {
@@ -154,5 +154,27 @@ describe("removeRelation", () => {
     const issues = [makeIssue({ id: "a", identifier: "A-1" })];
     const next = removeRelation(issues, "nope");
     expect(next[0]).toBe(issues[0]);
+  });
+});
+
+describe("endDateFromTransitions", () => {
+  const stateOf = (name: string) => ({ name, type: "started", position: 1 });
+  const transitions = [
+    { createdAt: "2025-04-07T08:00:00.000Z", fromState: null, toState: stateOf("In Progress") },
+    { createdAt: "2025-04-08T08:00:00.000Z", fromState: stateOf("In Progress"), toState: stateOf("Merged") },
+    { createdAt: "2025-04-09T08:00:00.000Z", fromState: stateOf("Merged"), toState: stateOf("In Progress") },
+    { createdAt: "2025-04-10T08:00:00.000Z", fromState: stateOf("In Progress"), toState: stateOf("Merged") },
+  ];
+
+  it("returns the most recent entry into the end state", () => {
+    expect(endDateFromTransitions(transitions, "Merged")).toBe("2025-04-10T08:00:00.000Z");
+  });
+
+  it("returns null when the issue never entered the end state", () => {
+    expect(endDateFromTransitions(transitions, "Released")).toBe(null);
+  });
+
+  it("returns null without an end state name", () => {
+    expect(endDateFromTransitions(transitions, "")).toBe(null);
   });
 });

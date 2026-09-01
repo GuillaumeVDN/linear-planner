@@ -749,6 +749,61 @@ describe("scheduleIssues", () => {
         }
       });
 
+      it("uses the effective start for a done issue that waited below start first", () => {
+        // FIN-814 shape: To do → Waiting for info (Apr 7) → In Progress (Apr 22) → Merged
+        // (Apr 23). The bar must cover the real work (Apr 22 → Apr 23), not the two weeks
+        // the issue spent parked in "Waiting for info".
+        const startedAt = isoDate(MONDAY); // Apr 7 — Linear's startedAt (entered Waiting for info)
+        const realStartIso = isoDate(addDays(MONDAY, 15)); // Apr 22 Tue — moved to In Progress
+        const mergedIso = isoDate(addDays(MONDAY, 16)); // Apr 23 Wed
+        const merged = STATES_WITH_WAITING.find((st) => st.name === "Merged")!;
+        const issues = [
+          makeIssue({
+            id: "x", identifier: "X-1", estimate: 8,
+            startedAt,
+            state: stateOf(merged),
+          }),
+        ];
+        const history: Map<string, StateTransition[]> = new Map([
+          ["x", [
+            { createdAt: startedAt, fromState: stateOf(todo), toState: stateOf(wait) },
+            { createdAt: realStartIso, fromState: stateOf(wait), toState: stateOf(inProgress) },
+            { createdAt: mergedIso, fromState: stateOf(inProgress), toState: stateOf(merged) },
+          ]],
+        ]);
+        // End status "Merged" ⇒ the issue counts as done, ending when it was merged.
+        const result = scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "Merged", new Map([["x", mergedIso]]), "In Progress", history);
+        const x = findIssue(result, "X-1")!;
+        expect(x.done).toBe(true);
+        expect(x.startedAtRaw).toBe(realStartIso);
+        expect(x.startDay).toBe(15); // Apr 22, not Apr 7
+        expect(x.daysSpent).toBe(1.5); // Apr 22 full day + Apr 23 AM, not the 12 days since Apr 7
+      });
+
+      it("keeps a merged issue open when the configured end status is a later completed state", () => {
+        // The user's end status is "Done" (completed type). A ticket sitting in "Merged" is
+        // still open: the "merged" name heuristic must not override an explicit setting.
+        const merged = STATES_WITH_WAITING.find((st) => st.name === "Merged")!;
+        const issues = [
+          makeIssue({
+            id: "x", identifier: "X-1", estimate: 3,
+            startedAt: isoDate(MONDAY),
+            state: stateOf(merged),
+          }),
+        ];
+        const explicit = findIssue(
+          scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "Done", new Map(), "In Progress"),
+          "X-1",
+        )!;
+        expect(explicit.done).toBe(false);
+        // With no end status configured, the "merged" heuristic still applies.
+        const fallback = findIssue(
+          scheduleIssues(issues, 1, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress"),
+          "X-1",
+        )!;
+        expect(fallback.done).toBe(true);
+      });
+
       it("excludes no-count days from a done issue's elapsed days", () => {
         // Done issue: Apr 7 AM → Apr 11 AM (4.5 elapsed days). A correction excludes
         // Apr 8 AM → Apr 9 PM (2 working days), which must drop out of daysSpent too —
@@ -1385,6 +1440,24 @@ describe("scheduleIssues", () => {
       // covers through Apr 10 — NOT jump to the next cycle (~offset 14, Apr 21).
       expect(x.endDay).toBeLessThanOrEqual(4);
       expect(x.endDay).toBeGreaterThan(3);
+    });
+
+    it("keeps the real end date for an issue finished during the cooldown", () => {
+      // FIN-814: merged Fri Apr 11 morning — a working day, but inside the cooldown. The bar
+      // ends on that real date, NOT pushed forward to the next cycle's first day (Apr 21).
+      const issues = [
+        makeIssue({
+          id: "x", identifier: "X-1", estimate: 4,
+          startedAt: isoDate(MONDAY),
+          completedAt: "2025-04-11T09:00:00.000Z",
+          state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+        }),
+      ];
+      const x = findIssue(scheduleIssues(issues, 1, MONDAY, CYCLES, [], WORKFLOW_STATES), "X-1")!;
+      // Apr 11 is calendar offset 4; merged in the morning ⇒ the bar covers through Apr 11 AM.
+      expect(x.endDay).toBe(4.5);
+      // Days spent stays counted on schedulable days only: Apr 7 AM → Apr 10 PM = 4 days.
+      expect(x.daysSpent).toBe(4);
     });
   });
 

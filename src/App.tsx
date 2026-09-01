@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties } from "react";
-import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates, fetchIssueStateHistory, fetchIssueNoCountRanges, createBlockingRelation, deleteIssueRelation, addBlocksRelation, removeRelation } from "./linear";
+import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueStateHistory, endDateFromTransitions, createBlockingRelation, deleteIssueRelation, addBlocksRelation, removeRelation } from "./linear";
 import type { LinearProject, LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState, StateTransition, AssignedInterval, NoCountRange } from "./linear";
 import { startLogin, handleOAuthCallback, getCallbackPath, isAuthenticated, clearTokens, logout, isWriteEnabled, setWriteEnabled, isAutoRefreshEnabled, setAutoRefreshEnabled } from "./auth";
-import { scheduleIssues } from "./scheduler";
+import { scheduleIssues, buildIsDone } from "./scheduler";
 import type { ScheduleResult } from "./scheduler";
 import { GanttChart } from "./GanttChart";
 import { DependencyTree } from "./DependencyTree";
@@ -260,44 +260,29 @@ export default function App() {
         }
       }
       const endName = computeEffectiveEndStatus(endStatusNameRef.current, states);
-      let endPosition: number | null = null;
-      for (const s of states) {
-        if (s.type === "started" && s.name === endName) {
-          if (endPosition === null || s.position < endPosition) endPosition = s.position;
-        }
-      }
-      const doneIds = issues.filter((i) => {
-        if (!i.startedAt) return false;
-        const t = i.state.type;
-        if (t === "completed" || t === "canceled") return true;
-        if (t === "started" && endPosition !== null && i.state.position >= endPosition) return true;
-        return false;
-      }).map((i) => i.id);
+      const isDone = buildIsDone(issues, states, endName);
+      const doneIds = issues.filter((i) => i.startedAt && isDone(i)).map((i) => i.id);
 
-      const endDates = doneIds.length > 0
-        ? await fetchIssueEndDates(doneIds, endName)
-        : new Map<string, string>();
-
-      // Fetch state-transition history for in-progress issues. The scheduler uses this to
-      // discount time spent in below-start states (e.g. "Waiting for info") which Linear's
-      // own `startedAt` would otherwise treat as start time.
-      const inProgressIds = issues
-        .filter((i) => i.startedAt && i.state.type === "started" && !doneIds.includes(i.id))
-        .map((i) => i.id);
-      const history = inProgressIds.length > 0
-        ? await fetchIssueStateHistory(inProgressIds)
+      // Fetch the state-transition history of every issue that ever started — done ones
+      // included. The scheduler uses it to discount time spent in below-start states (e.g.
+      // "Waiting for info"), which Linear's own `startedAt` would otherwise treat as start
+      // time, and to read the `planner-no-count:` corrections out of the comments.
+      const startedIds = issues.filter((i) => i.startedAt).map((i) => i.id);
+      const history = startedIds.length > 0
+        ? await fetchIssueStateHistory(startedIds)
         : { transitions: new Map<string, StateTransition[]>(), assignedIntervals: new Map<string, AssignedInterval[]>(), noCount: new Map<string, NoCountRange[]>() };
 
-      // Done issues skip the history query, but their `planner-no-count:` corrections still
-      // have to be discounted — fetch their comments on their own.
-      const doneNoCount = await fetchIssueNoCountRanges(doneIds);
-      const noCount = new Map(history.noCount);
-      for (const [id, ranges] of doneNoCount) noCount.set(id, ranges);
+      // End dates come out of that same history — no second query pass.
+      const endDates = new Map<string, string>();
+      for (const id of doneIds) {
+        const iso = endDateFromTransitions(history.transitions.get(id) ?? [], endName);
+        if (iso) endDates.set(id, iso);
+      }
 
       setDoneEndDates(endDates);
       setStateHistoryByIssue(history.transitions);
       setAssignedIntervalsByIssue(history.assignedIntervals);
-      setNoCountByIssue(noCount);
+      setNoCountByIssue(history.noCount);
       setProjectIssues(issues);
       setProjectCycles(cycles);
       setProjectMilestones(milestones);

@@ -523,79 +523,15 @@ export async function fetchIssueStateHistory(issueIds: string[]): Promise<IssueH
 }
 
 /**
- * Fetch only the `planner-no-count:` corrections for a set of issues. Done issues don't need
- * their state history (their bar spans the real start→completion dates), but a manual
- * exclusion still has to be discounted from the days they took — so we grab the comments alone,
- * in bigger batches than the much heavier history query.
+ * Most recent moment an issue entered `endStateName`, from its chronological transitions.
+ * The history is already fetched for every started issue, so the end date is read from it
+ * rather than queried again.
  */
-export async function fetchIssueNoCountRanges(issueIds: string[]): Promise<Map<string, NoCountRange[]>> {
-  const noCount = new Map<string, NoCountRange[]>();
-  if (issueIds.length === 0) return noCount;
-
-  for (let i = 0; i < issueIds.length; i += 20) {
-    const batch = issueIds.slice(i, i + 20);
-    const params = batch.map((_, idx) => `$id${idx}: String!`).join(", ");
-    const aliases = batch
-      .map((_, idx) => `i${idx}: issue(id: $id${idx}) { id comments(first: 100) { nodes { body } } }`)
-      .join("\n");
-
-    const variables: Record<string, unknown> = {};
-    batch.forEach((id, idx) => { variables[`id${idx}`] = id; });
-
-    const data = await gql<Record<string, { id: string; comments: { nodes: Array<{ body: string }> } } | null>>(
-      `query(${params}) { ${aliases} }`,
-      variables,
-    );
-
-    for (const key of Object.keys(data)) {
-      const issue = data[key];
-      if (!issue) continue;
-      const ranges = (issue.comments?.nodes ?? []).flatMap((c) => parseNoCountRanges(c.body));
-      if (ranges.length > 0) noCount.set(issue.id, ranges);
-    }
+export function endDateFromTransitions(transitions: StateTransition[], endStateName: string): string | null {
+  if (!endStateName) return null;
+  for (let i = transitions.length - 1; i >= 0; i--) {
+    if (transitions[i].toState?.name === endStateName) return transitions[i].createdAt;
   }
-
-  return noCount;
+  return null;
 }
 
-/**
- * Fetch the date each issue entered a specific workflow state, by querying issue history.
- * Returns a map of issueId -> ISO date string.
- */
-export async function fetchIssueEndDates(
-  issueIds: string[],
-  endStateName: string,
-): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
-  if (issueIds.length === 0 || !endStateName) return result;
-
-  for (let i = 0; i < issueIds.length; i += 5) {
-    const batch = issueIds.slice(i, i + 5);
-    const params = batch.map((_, idx) => `$id${idx}: String!`).join(", ");
-    const aliases = batch
-      .map((_, idx) => `i${idx}: issue(id: $id${idx}) { id history(first: 50) { nodes { createdAt toState { name } } } }`)
-      .join("\n");
-
-    const variables: Record<string, unknown> = {};
-    batch.forEach((id, idx) => { variables[`id${idx}`] = id; });
-
-    const data = await gql<Record<string, { id: string; history: { nodes: Array<{ createdAt: string; toState: { name: string } | null }> } }>>(
-      `query(${params}) { ${aliases} }`,
-      variables,
-    );
-
-    for (const key of Object.keys(data)) {
-      const issue = data[key];
-      if (!issue?.history?.nodes) continue;
-      // History is newest-first; first match = most recent transition to end state
-      for (const entry of issue.history.nodes) {
-        if (entry.toState?.name === endStateName) {
-          result.set(issue.id, entry.createdAt);
-          break;
-        }
-      }
-    }
-  }
-
-  return result;
-}

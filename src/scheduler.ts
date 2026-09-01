@@ -100,22 +100,30 @@ function compareLinearViewOrder(a: LinearIssue, b: LinearIssue): number {
 
 /**
  * Build a function that checks if an issue is effectively done.
- * Done = completed/canceled state type, OR "started" type with position >= "merged" position.
+ * Done = completed/canceled state type, OR "started" type with position >= the configured end
+ * status (falling back to a state named "merged" when nothing is configured).
+ * Exported so callers decide "done" exactly the way the scheduler does — two copies of this
+ * rule drifting apart is how a merged issue ends up both done and still-scheduled.
  */
-function buildIsDone(issues: LinearIssue[], workflowStates: LinearWorkflowState[], endStatusName: string): (issue: LinearIssue) => boolean {
+export function buildIsDone(issues: LinearIssue[], workflowStates: LinearWorkflowState[], endStatusName: string): (issue: LinearIssue) => boolean {
   let endPosition: number | null = null;
+  // Whether the configured end status exists in the workflow. When it does, it settles the
+  // question — a *completed*-type end status (e.g. "Released") leaves no started position to
+  // promote from, so only completed/canceled issues are done. Falling through to the "merged"
+  // heuristic there would call an issue done that the user's own setting says is still open.
+  let endStatusKnown = false;
 
   if (endStatusName) {
     for (const state of workflowStates) {
-      if (state.type === "started" && state.name === endStatusName) {
-        if (endPosition === null || state.position < endPosition) {
-          endPosition = state.position;
-        }
+      if (state.name !== endStatusName) continue;
+      endStatusKnown = true;
+      if (state.type === "started" && (endPosition === null || state.position < endPosition)) {
+        endPosition = state.position;
       }
     }
   }
 
-  if (endPosition === null) {
+  if (!endStatusKnown) {
     for (const state of workflowStates) {
       if (state.type === "started" && state.name.toLowerCase().includes("merged")) {
         if (endPosition === null || state.position < endPosition) {
@@ -125,7 +133,7 @@ function buildIsDone(issues: LinearIssue[], workflowStates: LinearWorkflowState[
     }
   }
 
-  if (endPosition === null) {
+  if (!endStatusKnown && endPosition === null) {
     for (const issue of issues) {
       if (issue.state.type === "started" && issue.state.name.toLowerCase().includes("merged")) {
         if (endPosition === null || issue.state.position < endPosition) {
@@ -159,6 +167,7 @@ function buildSchedulableDays(
     return {
       toWorkingDay(si: number) { return si; },
       toSchedulable(wdIndex: number) { return wdIndex; },
+      toSchedulableAtOrBefore(wdIndex: number) { return Math.max(wdIndex, 0); },
       countSchedulable(startWd: number, endWd: number) { return endWd < startWd ? 0 : endWd - startWd + 1; },
     };
   }
@@ -219,6 +228,25 @@ function buildSchedulableDays(
         wd++;
       }
       return schedulable.length + (wd - (schedulable.length > 0 ? schedulable[schedulable.length - 1] + 1 : 0));
+    },
+    /**
+     * Convert working day index to schedulable index, snapping BACKWARDS out of a cooldown
+     * (i.e. onto the last day of the preceding cycle) instead of forwards.
+     *
+     * Used for events that are already recorded — when a done issue actually started or was
+     * merged. Snapping those forwards lands them on the first day of the *next* cycle, so a
+     * ticket merged on the first day of a cooldown would end its bar two weeks later.
+     */
+    toSchedulableAtOrBefore(wdIndex: number): number {
+      if (wdIndex >= wdToSchedulable.length) {
+        // Past the table every working day is schedulable, so the offset carries over 1:1.
+        const lastWd = wdToSchedulable.length - 1;
+        return wdToSchedulable[lastWd] + (wdIndex - lastWd);
+      }
+      for (let wd = Math.max(wdIndex, 0); wd >= 0; wd--) {
+        if (wdToSchedulable[wd] >= 0) return wdToSchedulable[wd];
+      }
+      return 0;
     },
     /** Count schedulable days in the inclusive working-day range [startWd, endWd]. Cooldown days excluded. */
     countSchedulable(startWd: number, endWd: number): number {
@@ -325,6 +353,34 @@ export function scheduleIssues(
     const wd = cal.toWorkingDay(dateToCalendarOffset(d, startDate));
     const baseSi = sched.toSchedulable(wd);
     return baseSi * HALF_PER_DAY + (isAfterThreshold(iso) ? 1 : 0);
+  }
+
+  /** Fractional calendar offset of the half-day a timestamp falls in: .0 = AM, .5 = PM.
+   *  Unlike the si helpers this snaps nowhere — used to draw a done issue's bar on the days
+   *  the work really happened, weekends and cooldowns included. */
+  function calendarHalfForIso(iso: string): number {
+    const d = new Date(iso);
+    d.setHours(0, 0, 0, 0);
+    return dateToCalendarOffset(d, startDate) + (isAfterThreshold(iso) ? 0.5 : 0);
+  }
+
+  /** Half-day si index for an event that already happened (a done issue's start or merge):
+   *  the last schedulable half at or before the timestamp. Non-working days and cooldowns snap
+   *  BACKWARDS, unlike `siHalfForIso` — a ticket merged on the first day of a cooldown belongs
+   *  at the end of the cycle it was worked in, not at the start of the next one. */
+  function siHalfForIsoAtOrBefore(iso: string): number {
+    const d = new Date(iso);
+    d.setHours(0, 0, 0, 0);
+    const calOffset = dateToCalendarOffset(d, startDate);
+    let day = Math.min(calOffset, cal.calendarToWd.length - 1);
+    while (day >= 0 && cal.calendarToWd[day] < 0) day--;
+    if (day < 0) return 0;
+    const wd = cal.calendarToWd[day];
+    const si = sched.toSchedulableAtOrBefore(wd);
+    // Landed on an earlier day than the event itself (weekend, holiday or cooldown): that day
+    // was worked in full, so the range runs through its PM half.
+    if (day !== calOffset || sched.toWorkingDay(si) !== wd) return si * HALF_PER_DAY + 1;
+    return si * HALF_PER_DAY + (isAfterThreshold(iso) ? 1 : 0);
   }
 
   /** Calendar day offset of a manual "YYYY-MM-DD" date (used by no-count corrections). */
@@ -470,6 +526,17 @@ export function scheduleIssues(
   const doneEndDateStr = new Map<string, string | null>();
   const scheduledIds = new Set<string>();
 
+  /** Index of the first transition into an "active" state (type `started`, position ≥ the
+   *  configured start). -1 when the issue never reached one. */
+  function firstActiveTransitionIndex(transitions: StateTransition[]): number {
+    if (startPosition === null) return -1;
+    for (let i = 0; i < transitions.length; i++) {
+      const ts = transitions[i].toState;
+      if (ts && ts.type === "started" && ts.position >= startPosition) return i;
+    }
+    return -1;
+  }
+
   /**
    * Walk a state-transition history and account for time per state.
    * Returns:
@@ -491,11 +558,7 @@ export function scheduleIssues(
   } | null {
     if (startPosition === null) return null;
     const sp = startPosition;
-    let firstActiveIdx = -1;
-    for (let i = 0; i < transitions.length; i++) {
-      const ts = transitions[i].toState;
-      if (ts && ts.type === "started" && ts.position >= sp) { firstActiveIdx = i; break; }
-    }
+    const firstActiveIdx = firstActiveTransitionIndex(transitions);
     if (firstActiveIdx === -1) return null;
     const effectiveStartedAtIso = transitions[firstActiveIdx].createdAt;
 
@@ -572,8 +635,23 @@ export function scheduleIssues(
     const acct = computeStateAccounting(history, new Date().toISOString(), assignedIntervalsByIssue.get(issue.id) ?? [], noCountByIssue.get(issue.id) ?? []);
     if (acct) accountingByIssue.set(issue.id, acct);
   }
-  function effectiveStartedAtFor(issue: LinearIssue): string | null {
-    return accountingByIssue.get(issue.id)?.effectiveStartedAtIso ?? issue.startedAt;
+  // Done issues keep their span-based days spent, but their bar must still start where the
+  // work actually started: an issue parked in a below-start state (e.g. "Waiting for info")
+  // for weeks before reaching "In progress" would otherwise stretch back to Linear's
+  // `startedAt`, counting all that waiting as work.
+  const doneEffectiveStart = new Map<string, string>();
+  for (const issue of issues) {
+    if (!issue.startedAt || !isDone(issue)) continue;
+    const history = stateHistoryByIssue.get(issue.id);
+    if (!history || history.length === 0) continue;
+    const idx = firstActiveTransitionIndex(history);
+    if (idx >= 0) doneEffectiveStart.set(issue.id, history[idx].createdAt);
+  }
+
+  function effectiveStartedAtFor(issue: LinearIssue): string {
+    return accountingByIssue.get(issue.id)?.effectiveStartedAtIso
+      ?? doneEffectiveStart.get(issue.id)
+      ?? issue.startedAt!;
   }
 
   function buildScheduledIssue(issue: LinearIssue, duration: number, estimate: number, startSi: number, endSi: number, worker: number): ScheduledIssue {
@@ -589,6 +667,7 @@ export function scheduleIssues(
       if (isDone(issue)) {
         // si values already encode AM/PM positioning of start/end times — no extra adjustment
         // needed. Half-days manually excluded via `planner-no-count:` still drop out.
+        effectiveStartedAtRaw = effectiveStartedAtFor(issue);
         const isExcludedHalf = excludedHalfPredicate(noCountByIssue.get(issue.id) ?? []);
         for (let h = startSi; h < endSi; h++) {
           if (!isExcludedHalf(h)) continue;
@@ -620,8 +699,15 @@ export function scheduleIssues(
     // half-width. Using siHalfToFractionalCalendar(endSi) directly would map the next schedulable
     // slot — which, right before a cooldown/holiday gap, lands in the *next* cycle and visually
     // stretches the bar across the gap.
-    const startDay = siHalfToFractionalCalendar(startSi);
-    let endDay = endSi > startSi ? siHalfToFractionalCalendar(endSi - 1) + 0.5 : siHalfToFractionalCalendar(endSi);
+    // A done issue is drawn on the dates it was actually worked, not on the schedulable grid:
+    // a ticket merged during a cooldown (or over a weekend) must keep that real date rather
+    // than being pushed onto a theoretical cycle day. Its si span still drives scheduling and
+    // days spent, which stay counted in schedulable half-days.
+    const doneEndIso = isDone(issue) ? doneEndDateStr.get(issue.id) : null;
+    const startDay = isDone(issue) ? calendarHalfForIso(effectiveStartedAtRaw ?? issue.startedAt!) : siHalfToFractionalCalendar(startSi);
+    let endDay = doneEndIso
+      ? Math.max(calendarHalfForIso(doneEndIso) + 0.5, startDay + 0.5)
+      : endSi > startSi ? siHalfToFractionalCalendar(endSi - 1) + 0.5 : siHalfToFractionalCalendar(endSi);
     if (isLate) {
       endDay = Math.max(endDay, dateToCalendarOffset(today, startDate) + 1);
     }
@@ -670,7 +756,7 @@ export function scheduleIssues(
     if (!isDone(issue) || !issue.startedAt) continue;
     scheduledIds.add(issue.id);
     // siHalf: start at the morning of the start day, shifted to PM if started after 13:30.
-    const startSi = siHalfForIso(issue.startedAt);
+    const startSi = siHalfForIsoAtOrBefore(effectiveStartedAtFor(issue));
     const endDateStr = doneEndDates.get(issue.id) ?? issue.completedAt;
     doneEndDateStr.set(issue.id, endDateStr);
     const hasEst = issue.estimate != null && issue.estimate > 0;
@@ -679,7 +765,7 @@ export function scheduleIssues(
     if (endDateStr) {
       // End at the morning of the end day by default, or PM if ended after 13:30.
       // We add 1 (one half-day) so the half-day containing the end is included in the bar.
-      const endHalfRaw = siHalfForIso(endDateStr);
+      const endHalfRaw = siHalfForIsoAtOrBefore(endDateStr);
       endSi = Math.max(startSi + 1, endHalfRaw + 1);
     } else {
       // No explicit end date: fall back to estimate-bounded duration up to today.
@@ -930,7 +1016,7 @@ export function scheduleIssues(
   for (const issue of issues) {
     if (!isDone(issue) || !issue.startedAt) continue;
     // Half-day-aware start: AM of effective day, PM if started after threshold.
-    const startSi = siHalfForIso(issue.startedAt);
+    const startSi = siHalfForIsoAtOrBefore(effectiveStartedAtFor(issue));
     const endSi = endSiMap.get(issue.id) ?? startSi + HALF_PER_DAY;
     const hasEst = issue.estimate != null && issue.estimate > 0;
     const est = hasEst ? issue.estimate! : DEFAULT_ESTIMATE;
