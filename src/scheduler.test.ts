@@ -853,6 +853,79 @@ describe("scheduleIssues", () => {
         expect(x.daysSpent).toBe(1.5);
       });
 
+      it("stops counting days at the last schedulable half when today is in a cooldown", () => {
+        // FIN-971: moved to In Progress on Thu Apr 10 in the afternoon — the cycle's last
+        // half-day. Today is Apr 15, inside the cooldown, so nothing more has been worked:
+        // 0.5 day. Counting forward out of the cooldown would bill the next cycle's first day.
+        const CYCLES = [
+          { id: "c1", name: "Cycle 1", number: 1, startsAt: isoDate(MONDAY), endsAt: isoDate(addDays(MONDAY, 4)) }, // Apr 7–10
+          { id: "c2", name: "Cycle 2", number: 2, startsAt: isoDate(addDays(MONDAY, 14)), endsAt: isoDate(addDays(MONDAY, 18)) }, // Apr 21–24
+        ];
+        const startIso = "2025-04-10T15:00:00.000Z"; // Thu 17:00 Paris ⇒ PM half
+        const issues = [
+          makeIssue({ id: "x", identifier: "X-1", estimate: 3, startedAt: startIso, state: stateOf(inProgress) }),
+        ];
+        const history: Map<string, StateTransition[]> = new Map([
+          ["x", [{ createdAt: startIso, fromState: stateOf(todo), toState: stateOf(inProgress) }]],
+        ]);
+        const fakeNow = new Date("2025-04-15T09:00:00.000Z"); // Tue, in the cooldown
+        const realDate = Date;
+        // @ts-expect-error - mock Date constructor
+        globalThis.Date = class extends realDate {
+          constructor(...args: ConstructorParameters<typeof realDate>) {
+            if (args.length === 0) return new realDate(fakeNow);
+            // @ts-expect-error - spread args
+            return new realDate(...args);
+          }
+          static now() { return fakeNow.getTime(); }
+        } as DateConstructor;
+        try {
+          const x = findIssue(
+            scheduleIssues(issues, 1, MONDAY, CYCLES, [], STATES_WITH_WAITING, "", new Map(), "In Progress", history),
+            "X-1",
+          )!;
+          expect(x.daysSpent).toBe(0.5);
+        } finally {
+          globalThis.Date = realDate;
+        }
+      });
+
+      it("keeps a started issue on its real start date despite an unfinished blocker", () => {
+        // FIN-971: a QA ticket moved to In Progress on Apr 8 while its dev ticket (5 days from
+        // Apr 7, so unfinished) still blocks it. The recorded start wins — the bar must not be
+        // pushed behind the blocker's end.
+        const dev = makeIssue({
+          id: "dev", identifier: "A-1", estimate: 5,
+          startedAt: isoDate(MONDAY),
+          state: stateOf(inProgress),
+          relations: { nodes: [{ type: "blocks", relatedIssue: { id: "qa", identifier: "A-2" } }] },
+        });
+        const qa = makeIssue({
+          id: "qa", identifier: "A-2", estimate: 1,
+          startedAt: isoDate(addDays(MONDAY, 1)),
+          state: stateOf(inProgress),
+        });
+        const result = scheduleIssues([dev, qa], 2, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress");
+        expect(findIssue(result, "A-1")!.startDay).toBe(0);
+        expect(findIssue(result, "A-2")!.startDay).toBe(1); // Apr 8, not after the dev ticket
+      });
+
+      it("keeps a started issue on its real start date when the blocker has not started", () => {
+        // The blocker is still in the backlog, so phase 1 used to leave the started issue
+        // unpinned and phase 2 rescheduled it from today, losing its real start.
+        const blocker = makeIssue({
+          id: "b", identifier: "A-1", estimate: 3,
+          relations: { nodes: [{ type: "blocks", relatedIssue: { id: "x", identifier: "A-2" } }] },
+        });
+        const started = makeIssue({
+          id: "x", identifier: "A-2", estimate: 2,
+          startedAt: isoDate(MONDAY),
+          state: stateOf(inProgress),
+        });
+        const result = scheduleIssues([blocker, started], 2, MONDAY, [], [], STATES_WITH_WAITING, "", new Map(), "In Progress");
+        expect(findIssue(result, "A-2")!.startDay).toBe(0);
+      });
+
       it("spawns extra worker lanes when more issues are started in parallel than W", () => {
         // 3 issues all started today on Apr 7 with W=2. Without lane expansion, the 3rd
         // would be pushed past the second's end. With expansion, all 3 should pin to day 0.

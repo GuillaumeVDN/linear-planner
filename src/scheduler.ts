@@ -596,7 +596,13 @@ export function scheduleIssues(
       const state = transitions[i].toState;
       if (!state) continue;
       const startHalf = siHalfForIso(segStartIso);
-      const endHalf = isLastSeg ? siHalfForIso(segEndIso) + 1 : siHalfForIso(segEndIso);
+      // The last segment runs up to "now", inclusive of the half we are in — and "now" is a
+      // recorded moment, so it snaps backwards: during a cooldown (or a weekend) the sweep must
+      // stop at the last schedulable half, not jump forward onto the next cycle's first day and
+      // count it as worked. Intermediate segment ends stay forward-snapped: they are exclusive
+      // bounds, so a transition made during a cooldown correctly closes the segment at the last
+      // schedulable half before it.
+      const endHalf = isLastSeg ? siHalfForIsoAtOrBefore(segEndIso) + 1 : siHalfForIso(segEndIso);
       const isActiveState = state.type === "started" && state.position >= sp;
       const isBelowStart = state.type === "started" && state.position < sp;
 
@@ -783,61 +789,46 @@ export function scheduleIssues(
   const configuredNumWorkers = Math.max(1, numWorkers);
   const workerFreeAtSi: number[] = new Array(configuredNumWorkers).fill(0);
 
-  const pinnedRemaining = new Set(
-    issues.filter((i) => isActivelyInProgress(i) && !isDone(i)).map((i) => i.id),
-  );
+  // A started issue is pinned to when the work actually began — a recorded fact, so an
+  // unfinished blocker never pushes it later (a QA ticket started while its dev ticket was
+  // still open belongs on the day it started). Blockers only gate unstarted work, in phase 2.
+  for (const issue of issues) {
+    if (!isActivelyInProgress(issue) || isDone(issue)) continue;
 
-  let progress = true;
-  while (progress && pinnedRemaining.size > 0) {
-    progress = false;
-    for (const issueId of pinnedRemaining) {
-      const issue = issueMap.get(issueId)!;
-      const undoneBlockers = Array.from(blockedBy.get(issueId) ?? []);
-      if (!undoneBlockers.every((bid) => scheduledIds.has(bid))) continue;
+    // Use the effective started timestamp (first entry into an active state) when state
+    // history is available, so the gantt bar starts where the work actually started — not
+    // at Linear's `startedAt`, which can be much earlier (e.g. moved to "Waiting for info"
+    // for days before reaching "In progress").
+    const effectiveStartedIso = effectiveStartedAtFor(issue) ?? issue.startedAt!;
+    // Half-day desired start: AM of the effective day, or PM if started after 13:30 Paris.
+    const desiredStartSi = siHalfForIso(effectiveStartedIso);
+    const hasEstimate = issue.estimate != null && issue.estimate > 0;
+    const est = hasEstimate ? issue.estimate! : DEFAULT_ESTIMATE;
+    const estHalves = estimateToHalves(est);
 
-      // Use the effective started timestamp (first entry into an active state) when state
-      // history is available, so the gantt bar starts where the work actually started — not
-      // at Linear's `startedAt`, which can be much earlier (e.g. moved to "Waiting for info"
-      // for days before reaching "In progress").
-      const effectiveStartedIso = effectiveStartedAtFor(issue) ?? issue.startedAt!;
-      // Half-day desired start: AM of the effective day, or PM if started after 13:30 Paris.
-      const desiredStartSi = siHalfForIso(effectiveStartedIso);
-      const hasEstimate = issue.estimate != null && issue.estimate > 0;
-      const est = hasEstimate ? issue.estimate! : DEFAULT_ESTIMATE;
-      const estHalves = estimateToHalves(est);
-
-      let earliestFromBlockers = 0;
-      for (const bid of undoneBlockers) {
-        earliestFromBlockers = Math.max(earliestFromBlockers, endSiMap.get(bid) ?? 0);
-      }
-
-      let bestWorker = -1;
-      let bestStartSi = Infinity;
-      const constrainedSi = Math.max(desiredStartSi, earliestFromBlockers);
-      for (let w = 0; w < workerFreeAtSi.length; w++) {
-        const s = Math.max(workerFreeAtSi[w], constrainedSi);
-        if (s < bestStartSi) { bestStartSi = s; bestWorker = w; }
-      }
-      // If no existing worker can start the issue at its actual desired start, spawn a new
-      // worker lane so the issue renders at the correct real Linear date.
-      if (bestStartSi > constrainedSi) {
-        bestWorker = workerFreeAtSi.length;
-        workerFreeAtSi.push(0);
-        bestStartSi = constrainedSi;
-      }
-
-      const startSi = bestStartSi;
-      const endSi = startSi + estHalves;
-      const isLate = hasEstimate && todaySi >= endSi;
-      // When late, extend the bar to cover today fully (end of PM of today).
-      const effectiveEndSi = isLate ? (Math.floor(todaySi / HALF_PER_DAY) + 1) * HALF_PER_DAY : endSi;
-      workerFreeAtSi[bestWorker] = effectiveEndSi;
-      endSiMap.set(issue.id, effectiveEndSi);
-      scheduledIds.add(issue.id);
-      pinnedRemaining.delete(issueId);
-      progress = true;
-      scheduled.push(buildScheduledIssue(issue, est, est, startSi, endSi, bestWorker));
+    let bestWorker = -1;
+    let bestStartSi = Infinity;
+    for (let w = 0; w < workerFreeAtSi.length; w++) {
+      const s = Math.max(workerFreeAtSi[w], desiredStartSi);
+      if (s < bestStartSi) { bestStartSi = s; bestWorker = w; }
     }
+    // If no existing worker can start the issue at its actual desired start, spawn a new
+    // worker lane so the issue renders at the correct real Linear date.
+    if (bestStartSi > desiredStartSi) {
+      bestWorker = workerFreeAtSi.length;
+      workerFreeAtSi.push(0);
+      bestStartSi = desiredStartSi;
+    }
+
+    const startSi = bestStartSi;
+    const endSi = startSi + estHalves;
+    const isLate = hasEstimate && todaySi >= endSi;
+    // When late, extend the bar to cover today fully (end of PM of today).
+    const effectiveEndSi = isLate ? (Math.floor(todaySi / HALF_PER_DAY) + 1) * HALF_PER_DAY : endSi;
+    workerFreeAtSi[bestWorker] = effectiveEndSi;
+    endSiMap.set(issue.id, effectiveEndSi);
+    scheduledIds.add(issue.id);
+    scheduled.push(buildScheduledIssue(issue, est, est, startSi, endSi, bestWorker));
   }
 
   // --- Phase 2: schedule remaining non-done issues per milestone ---
