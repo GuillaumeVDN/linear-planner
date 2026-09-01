@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { scheduleIssues } from "./scheduler";
-import type { LinearIssue, LinearMilestone, LinearWorkflowState, StateTransition, AssignedInterval } from "./linear";
+import type { LinearIssue, LinearMilestone, LinearWorkflowState, StateTransition, AssignedInterval, NoCountRange } from "./linear";
 
 // --- Helpers ---
 
@@ -747,6 +747,55 @@ describe("scheduleIssues", () => {
         } finally {
           globalThis.Date = realDate;
         }
+      });
+
+      it("excludes no-count days from a done issue's elapsed days", () => {
+        // Done issue: Apr 7 AM → Apr 11 AM (4.5 elapsed days). A correction excludes
+        // Apr 8 AM → Apr 9 PM (2 working days), which must drop out of daysSpent too —
+        // done bars are span-based, but a manual exclusion still applies.
+        const issues = [
+          makeIssue({
+            id: "x", identifier: "X-1", estimate: 5,
+            startedAt: isoDate(MONDAY),
+            completedAt: isoDate(addDays(MONDAY, 4)),
+            state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+          }),
+        ];
+        const noCount: Map<string, NoCountRange[]> = new Map([
+          ["x", [{ startDate: "2025-04-08", startPm: false, endDate: "2025-04-09", endPm: true }]],
+        ]);
+        const corrected = scheduleIssues(issues, 1, MONDAY, [], [], WORKFLOW_STATES, "", new Map(), "", new Map(), new Map(), noCount);
+        const uncorrected = scheduleIssues(issues, 1, MONDAY, [], [], WORKFLOW_STATES);
+        const x = findIssue(corrected, "X-1")!;
+        expect(findIssue(uncorrected, "X-1")!.daysSpent).toBe(4.5);
+        expect(x.daysSpent).toBe(2.5);
+        expect(x.noCountDays).toBe(2);
+        // The excluded stretch is reported as an ignored range for the gantt to paint.
+        expect(x.ignoredRanges.length).toBeGreaterThan(0);
+      });
+
+      it("ends a no-count range on the previous working day when it falls on a weekend", () => {
+        // Done issue: Apr 7 AM → Apr 14 AM (Mon to Mon). The correction runs to Sun Apr 13,
+        // meaning "up to the weekend": it must cover Apr 8–11 entirely and leave Apr 14 AM
+        // (the completion half-day) counted.
+        const issues = [
+          makeIssue({
+            id: "x", identifier: "X-1", estimate: 5,
+            startedAt: isoDate(MONDAY),
+            completedAt: isoDate(addDays(MONDAY, 7)),
+            state: { name: "Done", type: "completed", color: "#0f0", position: 6 },
+          }),
+        ];
+        const noCount: Map<string, NoCountRange[]> = new Map([
+          ["x", [{ startDate: "2025-04-08", startPm: false, endDate: "2025-04-13", endPm: false }]],
+        ]);
+        const x = findIssue(
+          scheduleIssues(issues, 1, MONDAY, [], [], WORKFLOW_STATES, "", new Map(), "", new Map(), new Map(), noCount),
+          "X-1",
+        )!;
+        // Elapsed: Apr 7–11 (5 days) + Apr 14 AM = 5.5. Excluded: Apr 8,9,10,11 = 4 days.
+        expect(x.noCountDays).toBe(4);
+        expect(x.daysSpent).toBe(1.5);
       });
 
       it("spawns extra worker lanes when more issues are started in parallel than W", () => {

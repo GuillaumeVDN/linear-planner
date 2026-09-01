@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties } from "react";
-import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates, fetchIssueStateHistory, createBlockingRelation, deleteIssueRelation, addBlocksRelation, removeRelation } from "./linear";
+import { fetchProjects, fetchProjectIssues, fetchProjectCycles, fetchProjectMilestones, fetchProjectWorkflowStates, fetchIssueEndDates, fetchIssueStateHistory, fetchIssueNoCountRanges, createBlockingRelation, deleteIssueRelation, addBlocksRelation, removeRelation } from "./linear";
 import type { LinearProject, LinearIssue, LinearCycle, LinearMilestone, LinearWorkflowState, StateTransition, AssignedInterval, NoCountRange } from "./linear";
 import { startLogin, handleOAuthCallback, getCallbackPath, isAuthenticated, clearTokens, logout, isWriteEnabled, setWriteEnabled, isAutoRefreshEnabled, setAutoRefreshEnabled } from "./auth";
 import { scheduleIssues } from "./scheduler";
@@ -288,10 +288,16 @@ export default function App() {
         ? await fetchIssueStateHistory(inProgressIds)
         : { transitions: new Map<string, StateTransition[]>(), assignedIntervals: new Map<string, AssignedInterval[]>(), noCount: new Map<string, NoCountRange[]>() };
 
+      // Done issues skip the history query, but their `planner-no-count:` corrections still
+      // have to be discounted — fetch their comments on their own.
+      const doneNoCount = await fetchIssueNoCountRanges(doneIds);
+      const noCount = new Map(history.noCount);
+      for (const [id, ranges] of doneNoCount) noCount.set(id, ranges);
+
       setDoneEndDates(endDates);
       setStateHistoryByIssue(history.transitions);
       setAssignedIntervalsByIssue(history.assignedIntervals);
-      setNoCountByIssue(history.noCount);
+      setNoCountByIssue(noCount);
       setProjectIssues(issues);
       setProjectCycles(cycles);
       setProjectMilestones(milestones);

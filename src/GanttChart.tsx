@@ -501,7 +501,8 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown 
                         }
 
                         // "Ignored" stretches (below-start / unassigned / no-count) painted over
-                        // the in-progress bar in the pending color so they read as "not worked".
+                        // the bar in the pending color so they read as "not worked". Done bars
+                        // only ever carry manual no-count exclusions.
                         const ignoredBars = issue.ignoredRanges
                           .map((r) => getBarBounds(r.startDay, r.endDay))
                           .filter((b): b is NonNullable<typeof b> => b !== null)
@@ -543,7 +544,7 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown 
                               zIndex: 2,
                             }}
                           >
-                            {!issue.done && ignoredBars.map((b, idx) => (
+                            {ignoredBars.map((b, idx) => (
                               <div key={`ig-${idx}`} style={{ position: "absolute", left: b.left, top: 0, width: b.width, height: "100%", background: "var(--surface-hover)", pointerEvents: "none" }} />
                             ))}
                             {grayedCols.map((relCol) => (

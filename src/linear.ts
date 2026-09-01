@@ -523,6 +523,42 @@ export async function fetchIssueStateHistory(issueIds: string[]): Promise<IssueH
 }
 
 /**
+ * Fetch only the `planner-no-count:` corrections for a set of issues. Done issues don't need
+ * their state history (their bar spans the real start→completion dates), but a manual
+ * exclusion still has to be discounted from the days they took — so we grab the comments alone,
+ * in bigger batches than the much heavier history query.
+ */
+export async function fetchIssueNoCountRanges(issueIds: string[]): Promise<Map<string, NoCountRange[]>> {
+  const noCount = new Map<string, NoCountRange[]>();
+  if (issueIds.length === 0) return noCount;
+
+  for (let i = 0; i < issueIds.length; i += 20) {
+    const batch = issueIds.slice(i, i + 20);
+    const params = batch.map((_, idx) => `$id${idx}: String!`).join(", ");
+    const aliases = batch
+      .map((_, idx) => `i${idx}: issue(id: $id${idx}) { id comments(first: 100) { nodes { body } } }`)
+      .join("\n");
+
+    const variables: Record<string, unknown> = {};
+    batch.forEach((id, idx) => { variables[`id${idx}`] = id; });
+
+    const data = await gql<Record<string, { id: string; comments: { nodes: Array<{ body: string }> } } | null>>(
+      `query(${params}) { ${aliases} }`,
+      variables,
+    );
+
+    for (const key of Object.keys(data)) {
+      const issue = data[key];
+      if (!issue) continue;
+      const ranges = (issue.comments?.nodes ?? []).flatMap((c) => parseNoCountRanges(c.body));
+      if (ranges.length > 0) noCount.set(issue.id, ranges);
+    }
+  }
+
+  return noCount;
+}
+
+/**
  * Fetch the date each issue entered a specific workflow state, by querying issue history.
  * Returns a map of issueId -> ISO date string.
  */

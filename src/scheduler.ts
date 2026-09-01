@@ -327,13 +327,43 @@ export function scheduleIssues(
     return baseSi * HALF_PER_DAY + (isAfterThreshold(iso) ? 1 : 0);
   }
 
-  /** Half-day si index for a manual "YYYY-MM-DD" date + AM/PM half (used by no-count corrections). */
-  function siHalfForDateHalf(dateStr: string, pm: boolean): number {
+  /** Calendar day offset of a manual "YYYY-MM-DD" date (used by no-count corrections). */
+  function calendarOffsetForDate(dateStr: string): number {
     const [y, m, d] = dateStr.split("-").map(Number);
     const date = new Date(y, (m ?? 1) - 1, d ?? 1);
     date.setHours(0, 0, 0, 0);
-    const wd = cal.toWorkingDay(dateToCalendarOffset(date, startDate));
+    return dateToCalendarOffset(date, startDate);
+  }
+
+  /** Half-day si index for a manual "YYYY-MM-DD" date + AM/PM half. A non-working date snaps
+   *  forward to the next working day (its AM), which is where an excluded stretch starts. */
+  function siHalfForDateHalf(dateStr: string, pm: boolean): number {
+    const wd = cal.toWorkingDay(calendarOffsetForDate(dateStr));
     return sched.toSchedulable(wd) * HALF_PER_DAY + (pm ? 1 : 0);
+  }
+
+  /** Exclusive si bound just past the last half a no-count range covers. A non-working end
+   *  date (a weekend, typically) means "up to the weekend", so it snaps *backwards* onto the
+   *  whole previous working day — snapping forward like the start does would exclude a
+   *  half-day that comes after the range. */
+  function siHalfAfterDateHalf(dateStr: string, pm: boolean): number {
+    const calOffset = calendarOffsetForDate(dateStr);
+    const isWorkingDay = calOffset >= 0 && calOffset < cal.calendarToWd.length && cal.calendarToWd[calOffset] >= 0;
+    if (isWorkingDay) return siHalfForDateHalf(dateStr, pm) + 1;
+    let d = Math.min(calOffset, cal.calendarToWd.length) - 1;
+    while (d >= 0 && cal.calendarToWd[d] < 0) d--;
+    if (d < 0) return 0;
+    return (sched.toSchedulable(cal.calendarToWd[d]) + 1) * HALF_PER_DAY;
+  }
+
+  /** Predicate telling whether a half-day si index falls inside a `planner-no-count:` range
+   *  (both endpoints inclusive). Shared by the in-progress sweep and the done-issue accounting. */
+  function excludedHalfPredicate(noCount: NoCountRange[]): (h: number) => boolean {
+    const windows = noCount.map((r) => ({
+      lo: siHalfForDateHalf(r.startDate, r.startPm),
+      hi: siHalfAfterDateHalf(r.endDate, r.endPm),
+    }));
+    return (h: number) => windows.some((w) => h >= w.lo && h < w.hi);
   }
 
   const startedStates = workflowStates
@@ -480,11 +510,7 @@ export function scheduleIssues(
     const isAssignedHalf = (h: number) => assignedWindows.some((w) => h >= w.startHalf && h < w.endHalf);
 
     // Manual no-count corrections in half-day space; both endpoints inclusive.
-    const excludedWindows = noCount.map((r) => ({
-      lo: siHalfForDateHalf(r.startDate, r.startPm),
-      hi: siHalfForDateHalf(r.endDate, r.endPm) + 1,
-    }));
-    const isExcludedHalf = (h: number) => excludedWindows.some((w) => h >= w.lo && h < w.hi);
+    const isExcludedHalf = excludedHalfPredicate(noCount);
 
     // Sweep each half-day from the effective start to "now". A half counts as worked only when
     // its state is active (≥ start), someone is assigned, and it isn't manually excluded.
@@ -555,10 +581,23 @@ export function scheduleIssues(
     let daysSpent: number | null = null;
     let belowStartBreakdown: Array<{ stateName: string; days: number }> = [];
     let effectiveStartedAtRaw = issue.startedAt;
+    // Done issues get no state sweep (their bar spans real start→completion dates), so their
+    // no-count exclusions are collected here instead of in `accountingByIssue`.
+    const doneIgnoredHalfRanges: Array<[number, number]> = [];
+    let doneNoCountHalves = 0;
     if (issue.startedAt) {
       if (isDone(issue)) {
-        // si values already encode AM/PM positioning of start/end times — no extra adjustment needed.
-        daysSpent = Math.max(0.5, (endSi - startSi) / HALF_PER_DAY);
+        // si values already encode AM/PM positioning of start/end times — no extra adjustment
+        // needed. Half-days manually excluded via `planner-no-count:` still drop out.
+        const isExcludedHalf = excludedHalfPredicate(noCountByIssue.get(issue.id) ?? []);
+        for (let h = startSi; h < endSi; h++) {
+          if (!isExcludedHalf(h)) continue;
+          doneNoCountHalves++;
+          const last = doneIgnoredHalfRanges[doneIgnoredHalfRanges.length - 1];
+          if (last && last[1] === h) last[1] = h + 1;
+          else doneIgnoredHalfRanges.push([h, h + 1]);
+        }
+        daysSpent = Math.max(0.5, (endSi - startSi - doneNoCountHalves) / HALF_PER_DAY);
       } else if (isActivelyInProgress(issue)) {
         const acct = accountingByIssue.get(issue.id);
         if (acct) {
@@ -589,10 +628,11 @@ export function scheduleIssues(
     // Convert the half-day "ignored" ranges (below-start / unassigned / no-count) to fractional
     // calendar offsets and clip them to the rendered bar so the gantt can paint them as pending.
     const acct = accountingByIssue.get(issue.id);
-    const ignoredRanges = (acct?.ignoredHalfRanges ?? [])
+    const ignoredHalfRanges = isDone(issue) ? doneIgnoredHalfRanges : (acct?.ignoredHalfRanges ?? []);
+    const ignoredRanges = ignoredHalfRanges
       .map(([lo, hi]) => ({ startDay: Math.max(startDay, siHalfToFractionalCalendar(lo)), endDay: Math.min(endDay, siHalfToFractionalCalendar(hi)) }))
       .filter((r) => r.endDay > r.startDay);
-    const noCountDays = (acct?.noCountHalves ?? 0) / HALF_PER_DAY;
+    const noCountDays = (isDone(issue) ? doneNoCountHalves : (acct?.noCountHalves ?? 0)) / HALF_PER_DAY;
     return {
       id: issue.id, identifier: issue.identifier, title: issue.title, url: issue.url,
       duration, estimate,
