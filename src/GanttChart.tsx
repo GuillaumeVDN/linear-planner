@@ -9,8 +9,22 @@ import { BLOCKED_STRIPE, NO_ESTIMATE_BG, DONE_STRIPE, ongoingStatusBg, isBlocked
 import {
   ROW_HEIGHT, ROW_GAP, CYCLE_ROW_HEIGHT, DATE_ROW_HEIGHT, HEADER_HEIGHT,
   DAY_WIDTH, LABEL_WIDTH,
-  type DayInfo, isOutsideCycles,
+  type DayInfo, isOutsideCycles, crossedNonWorkingRuns,
 } from "./ganttLayout";
+
+/** Merge overlapping/touching overlay rects, so an on-hold stretch is painted once. */
+function mergeBars(bars: Array<{ left: number; width: number }>): Array<{ left: number; width: number }> {
+  const merged: Array<{ left: number; width: number }> = [];
+  for (const bar of [...bars].sort((a, b) => a.left - b.left)) {
+    const last = merged[merged.length - 1];
+    if (last && bar.left <= last.left + last.width) {
+      last.width = Math.max(last.width, bar.left + bar.width - last.left);
+    } else {
+      merged.push({ ...bar });
+    }
+  }
+  return merged;
+}
 
 interface MilestoneGroup {
   milestoneId: string | null;
@@ -483,30 +497,35 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown 
                       {row.issues.map((issue) => {
                         const bounds = getBarBounds(issue.startDay, issue.endDay);
                         if (!bounds) return null;
-                        const { left: barLeft, width: barWidthRaw, firstVisCol } = bounds;
+                        const { left: barLeft, width: barWidthRaw } = bounds;
                         const barWidth = Math.max(barWidthRaw - 4, 4);
                         const isBlocked = isBlockedDisplay(issue);
 
-                        // Non-working/outside-cycle day overlays within bar. We iterate by
-                        // integer day to find grayed cells, positioning each overlay relative
-                        // to the bar's first visible column.
-                        const grayedCols: number[] = [];
+                        // Non-working/outside-cycle days inside the bar, tinted darker. Each
+                        // one is placed from the bar's real geometry: counting whole columns
+                        // from the bar's first one shifts every overlay by half a column when
+                        // the bar starts on a PM half, leaving that first morning untinted.
+                        const grayedBars: Array<{ left: number; width: number }> = [];
                         const iterEnd = Math.min(Math.ceil(issue.endDay), dayToCol.length);
                         for (let d = Math.floor(issue.startDay); d < iterEnd; d++) {
-                          const c = dayToCol[d];
-                          if (c >= 0) {
-                            const info = allDays[d];
-                            if (info && info.isGrayed) grayedCols.push(c - firstVisCol);
-                          }
+                          if (!allDays[d]?.isGrayed) continue;
+                          const b = getBarBounds(d, d + 1);
+                          if (b) grayedBars.push({ left: b.left - barLeft - 2, width: b.width });
                         }
 
-                        // "Ignored" stretches (below-start / unassigned / no-count) painted over
-                        // the bar in the pending color so they read as "not worked". Done bars
-                        // only ever carry manual no-count exclusions.
-                        const ignoredBars = issue.ignoredRanges
-                          .map((r) => getBarBounds(r.startDay, r.endDay))
-                          .filter((b): b is NonNullable<typeof b> => b !== null)
-                          .map((b) => ({ left: b.left - barLeft - 2, width: b.width }));
+                        // Stretches where nothing was worked, painted over the bar in the
+                        // pending color: below-start / unassigned / no-count halves (done bars
+                        // only ever carry the manual no-count ones), plus the weekends, holidays
+                        // and cooldowns the bar runs through.
+                        const pausedBars = mergeBars(
+                          [
+                            ...issue.ignoredRanges.map((r) => getBarBounds(r.startDay, r.endDay)),
+                            ...crossedNonWorkingRuns(issue.startDay, issue.endDay, (d) => allDays[d]?.isGrayed ?? false)
+                              .map(([from, to]) => getBarBounds(from, to + 1)),
+                          ]
+                            .filter((b): b is NonNullable<typeof b> => b !== null)
+                            .map((b) => ({ left: b.left - barLeft - 2, width: b.width })),
+                        );
 
                         return (
                           <div
@@ -544,11 +563,11 @@ export function GanttChart({ schedule, showWeekends, showHolidays, showCooldown 
                               zIndex: 2,
                             }}
                           >
-                            {ignoredBars.map((b, idx) => (
+                            {pausedBars.map((b, idx) => (
                               <div key={`ig-${idx}`} style={{ position: "absolute", left: b.left, top: 0, width: b.width, height: "100%", background: "var(--surface-hover)", pointerEvents: "none" }} />
                             ))}
-                            {grayedCols.map((relCol) => (
-                              <div key={`g-${relCol}`} style={{ position: "absolute", left: relCol * DAY_WIDTH - 2, top: 0, width: DAY_WIDTH, height: "100%", background: "rgba(0,0,0,0.08)", pointerEvents: "none" }} />
+                            {grayedBars.map((b, idx) => (
+                              <div key={`g-${idx}`} style={{ position: "absolute", left: b.left, top: 0, width: b.width, height: "100%", background: "rgba(0,0,0,0.08)", pointerEvents: "none" }} />
                             ))}
                             <AssigneeAvatar url={issue.assigneeAvatarUrl} name={issue.assigneeName} size={16} />
                             <StatusCircle stateType={issue.stateType} color={issue.stateColor} progress={issue.stateProgress} />
